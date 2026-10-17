@@ -14,7 +14,7 @@ import kotlinx.coroutines.CancellationException
 /** The bounded bitmap lives in ImageView, never in Compose state or saved state. */
 @Composable
 internal fun LocalCardImage(path: String, modifier: Modifier = Modifier,
-    contentScale: ContentScale = ContentScale.Crop, maxSide: Int = 800) {
+    contentScale: ContentScale = ContentScale.Crop, maxSide: Int = 800, showError: Boolean = true) {
     val context = LocalContext.current
     val view = remember(context) { ImageView(context).apply { contentDescription = "Изображение карточки" } }
     var failed by remember(path) { mutableStateOf(false) }
@@ -32,6 +32,6 @@ internal fun LocalCardImage(path: String, modifier: Modifier = Modifier,
             it.scaleType = if (contentScale == ContentScale.Crop) ImageView.ScaleType.CENTER_CROP
                 else ImageView.ScaleType.FIT_CENTER
         })
-        if (failed) Text("Изображение недоступно")
+        if (failed && showError) Text("Изображение недоступно")
     }
 }

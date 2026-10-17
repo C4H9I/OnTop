@@ -73,11 +73,12 @@ class BoardViewModel @JvmOverloads constructor(
 
     fun observeComments(cardId: Long) = commentDao.observeComments(cardId)
 
-    fun addComment(cardId: Long, text: String, onSuccess: () -> Unit) {
+    fun addComment(cardId: Long, text: String, onSuccess: (Long) -> Unit) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
-        write(onSuccess) {
-            commentDao.insert(CardCommentEntity(cardId = cardId, text = trimmed,
+        var insertedId = 0L
+        write({ onSuccess(insertedId) }) {
+            insertedId = commentDao.insert(CardCommentEntity(cardId = cardId, text = trimmed,
                 createdAt = System.currentTimeMillis()))
         }
     }

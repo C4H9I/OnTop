@@ -1,6 +1,7 @@
 package com.ontop.app
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -8,16 +9,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.background
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
@@ -44,6 +43,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.flowWithLifecycle
@@ -51,11 +53,8 @@ import androidx.lifecycle.Lifecycle
 import com.ontop.app.data.CardEntity
 import com.ontop.app.data.CardSize
 import com.ontop.app.ui.theme.OnTopTheme
-
-private val cardColors = listOf(
-    Color(0xFFE4EBDD), Color(0xFFE6E1EF), Color(0xFFF3E6D3),
-    Color(0xFFDDEBEC), Color(0xFFF0DFDF), Color(0xFFE6E8D9)
-)
+import com.ontop.app.ui.theme.Forest
+import com.ontop.app.ui.theme.Ink
 
 @Composable
 fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId: Long? = null,
@@ -126,19 +125,23 @@ fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId
 }
 
 @Composable
-private fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEntity) -> Unit) {
+internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEntity) -> Unit) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         floatingActionButton = {
             FloatingActionButton(
                 onClick = onAdd,
+                containerColor = Forest,
+                contentColor = Color.White,
+                shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.semantics { contentDescription = "Создать карточку" }
             ) { Text("+", style = MaterialTheme.typography.headlineMedium) }
         }
     ) { innerPadding ->
         Column(Modifier.fillMaxSize().padding(innerPadding).consumeWindowInsets(innerPadding)) {
             Text("OnTop", style = MaterialTheme.typography.headlineLarge,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
+                color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
             if (state.error != null) {
                 Text(state.error, color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(horizontal = 20.dp))
@@ -151,16 +154,20 @@ private fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnti
                         modifier = Modifier.padding(top = 12.dp))
                     TextButton(onClick = onAdd) { Text("Создать карточку") }
                 }
-                else -> LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(state.cards, key = { it.id }, span = {
-                        GridItemSpan(if (it.size == CardSize.WIDE) 2 else 1)
-                    }) { card -> ThoughtTile(card, onClick = { onOpen(card) }) }
+                else -> BoxWithConstraints(Modifier.weight(1f)) {
+                    // Keep two columns on a normal phone; don't squeeze enlarged type into tiny lanes.
+                    val columns = if ((maxWidth.value - 32f) / 2 >= 100f * LocalDensity.current.fontScale) 2 else 1
+                    LazyVerticalStaggeredGrid(
+                        columns = StaggeredGridCells.Fixed(columns),
+                        modifier = Modifier.fillMaxSize().testTag("card-board"),
+                        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 96.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalItemSpacing = 8.dp
+                    ) {
+                        items(state.cards, key = { it.id }, span = {
+                            if (it.size == CardSize.WIDE) StaggeredGridItemSpan.FullLine else StaggeredGridItemSpan.SingleLane
+                        }) { card -> ThoughtTile(card, onClick = { onOpen(card) }) }
+                    }
                 }
             }
         }
@@ -169,22 +176,25 @@ private fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnti
 
 @Composable
 private fun ThoughtTile(card: CardEntity, onClick: () -> Unit) {
+    // Stable IDs keep the colour and minimum height unchanged when neighbouring cards change.
+    val variant = Math.floorMod(card.id, 3L).toInt()
+    val background = cardBackground(card.id)
+    val hasImage = card.imagePath != null
+    val minHeight = when {
+        card.size == CardSize.WIDE -> if (hasImage) 192.dp else 144.dp
+        hasImage -> (224 + variant * 24).dp
+        else -> (152 + variant * 28).dp
+    }
     Card(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().heightIn(min = if (card.size == CardSize.WIDE) 132.dp else 176.dp),
-        shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.fillMaxWidth().testTag("card-${card.id}"),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
-            containerColor = cardColors[((card.id - 1) % cardColors.size).toInt()],
-            contentColor = Color(0xFF252A28)
+            containerColor = background,
+            contentColor = if (hasImage || background == Forest) Color.White else Ink
         )
     ) {
-        card.imagePath?.let { path ->
-            LocalCardImage(path, Modifier.fillMaxWidth().height(if (card.size == CardSize.WIDE) 160.dp else 144.dp),
-                contentScale = ContentScale.Crop, maxSide = 600)
-        }
-        // An opaque surface keeps the title readable for every image, including missing files.
-        Text(card.title, style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.fillMaxWidth().background(cardColors[((card.id - 1) % cardColors.size).toInt()]).padding(20.dp))
+        CardVisual(card, minHeight = minHeight)
     }
 }
 
