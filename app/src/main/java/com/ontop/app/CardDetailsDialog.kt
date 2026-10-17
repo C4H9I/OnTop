@@ -7,6 +7,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -55,6 +56,10 @@ internal fun CardDetailsDialog(
                     contentPadding = PaddingValues(vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     item { Text(card.title, style = MaterialTheme.typography.headlineMedium) }
+                    card.imagePath?.let { path ->
+                        item { LocalCardImage(path, Modifier.fillMaxWidth().height(280.dp),
+                            contentScale = ContentScale.Fit, maxSide = 1600) }
+                    }
                     if (card.description.isNotEmpty()) {
                         item { Text(card.description, style = MaterialTheme.typography.bodyLarge) }
                     }

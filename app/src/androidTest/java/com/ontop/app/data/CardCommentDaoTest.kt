@@ -77,7 +77,7 @@ class CardCommentDaoTest {
                 old.version = 1
             }
             db = Room.databaseBuilder(context, OnTopDatabase::class.java, name)
-                .addMigrations(OnTopDatabase.MIGRATION_1_2).build()
+                .addMigrations(OnTopDatabase.MIGRATION_1_2, OnTopDatabase.MIGRATION_2_3).build()
             val saved = db.cardDao().observeCards().first().single()
             assertEquals(card("Мысль").copy(id = 7), saved)
             val commentId = db.cardCommentDao().insert(CardCommentEntity(cardId = 7, text = "История", createdAt = 300))

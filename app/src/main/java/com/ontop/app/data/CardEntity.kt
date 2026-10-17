@@ -13,5 +13,6 @@ data class CardEntity(
     val size: CardSize = CardSize.NORMAL,
     val createdAt: Long,
     val updatedAt: Long,
-    val sortOrder: Long
+    val sortOrder: Long,
+    val imagePath: String? = null
 )

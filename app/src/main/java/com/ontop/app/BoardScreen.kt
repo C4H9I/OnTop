@@ -1,6 +1,7 @@
 package com.ontop.app
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,6 +17,10 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.background
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -36,6 +41,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
@@ -52,13 +58,32 @@ private val cardColors = listOf(
 )
 
 @Composable
-fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle) {
+fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId: Long? = null,
+    onCardRequestHandled: () -> Unit = {}) {
     val flow = remember(viewModel, lifecycle) { viewModel.state.flowWithLifecycle(lifecycle) }
     val state by flow.collectAsState(initial = viewModel.state.value)
     var editorOpen by rememberSaveable { mutableStateOf(false) }
     var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
     var editing by rememberSaveable { mutableStateOf(false) }
     val selected = state.cards.firstOrNull { it.id == selectedId }
+
+    LaunchedEffect(requestedCardId, state.loading, state.cards, state.saving) {
+        if (requestedCardId != null && !state.loading && !state.saving) {
+            if (state.cards.any { it.id == requestedCardId }) {
+                val openCard = {
+                    selectedId = requestedCardId
+                    editing = false
+                    editorOpen = true
+                    onCardRequestHandled()
+                }
+                // Release an unsaved image draft before switching away from an active editor.
+                if (editorOpen && editing) viewModel.cancelImageEdit(openCard) else openCard()
+            } else {
+                viewModel.cardNotFound()
+                onCardRequestHandled()
+            }
+        }
+    }
 
     // Do not show the create form for a deleted card or before Room has loaded it.
     LaunchedEffect(state.loading, state.cards, selectedId) {
@@ -82,11 +107,16 @@ fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle) {
             onEdit = { editing = true; viewModel.clearError() })
     }
     if (editorOpen && editing && (selectedId == null || selected != null)) {
+        LaunchedEffect(selectedId) { viewModel.beginImageEdit(selected) }
         CardEditorDialog(
             card = selected,
             saving = state.saving,
             error = state.error,
-            onDismiss = { editorOpen = false },
+            imagePath = state.draftImagePath,
+            onImageSelected = viewModel::importImage,
+            onRemoveImage = viewModel::removeDraftImage,
+            onPickerFailed = viewModel::imagePickerFailed,
+            onDismiss = { viewModel.cancelImageEdit { editorOpen = false } },
             onSave = { title, description, size ->
                 viewModel.save(selected, title, description, size) { editorOpen = false }
             },
@@ -148,7 +178,13 @@ private fun ThoughtTile(card: CardEntity, onClick: () -> Unit) {
             contentColor = Color(0xFF252A28)
         )
     ) {
-        Text(card.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(20.dp))
+        card.imagePath?.let { path ->
+            LocalCardImage(path, Modifier.fillMaxWidth().height(if (card.size == CardSize.WIDE) 160.dp else 144.dp),
+                contentScale = ContentScale.Crop, maxSide = 600)
+        }
+        // An opaque surface keeps the title readable for every image, including missing files.
+        Text(card.title, style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.fillMaxWidth().background(cardColors[((card.id - 1) % cardColors.size).toInt()]).padding(20.dp))
     }
 }
 
@@ -157,6 +193,10 @@ private fun CardEditorDialog(
     card: CardEntity?,
     saving: Boolean,
     error: String?,
+    imagePath: String?,
+    onImageSelected: (android.net.Uri) -> Unit,
+    onRemoveImage: () -> Unit,
+    onPickerFailed: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (String, String, CardSize) -> Unit,
     onDelete: () -> Unit
@@ -165,6 +205,9 @@ private fun CardEditorDialog(
     var description by rememberSaveable(card?.id) { mutableStateOf(card?.description.orEmpty()) }
     var size by rememberSaveable(card?.id) { mutableStateOf(card?.size ?: CardSize.NORMAL) }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    val picker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
+        if (uri != null) onImageSelected(uri)
+    }
 
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
@@ -184,6 +227,18 @@ private fun CardEditorDialog(
                     label = { Text("Подробный текст") }, modifier = Modifier.fillMaxWidth(),
                     minLines = 3, maxLines = 8
                 )
+                imagePath?.let { path ->
+                    LocalCardImage(path, Modifier.fillMaxWidth().height(200.dp), contentScale = ContentScale.Fit)
+                }
+                TextButton(onClick = {
+                    try { picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
+                    catch (_: Exception) { onPickerFailed() }
+                }, enabled = !saving) {
+                    Text(if (imagePath == null) "Выбрать изображение" else "Заменить изображение")
+                }
+                if (imagePath != null) {
+                    TextButton(onClick = onRemoveImage, enabled = !saving) { Text("Удалить изображение") }
+                }
                 Text("Размер карточки", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected = size == CardSize.NORMAL, onClick = { size = CardSize.NORMAL },

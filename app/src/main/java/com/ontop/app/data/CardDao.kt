@@ -10,6 +10,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 abstract class CardDao {
+    @Query("SELECT * FROM cards WHERE id = :id")
+    abstract suspend fun findById(id: Long): CardEntity?
+
     @Query("SELECT * FROM cards ORDER BY sortOrder ASC, id ASC")
     abstract fun observeCards(): Flow<List<CardEntity>>
 

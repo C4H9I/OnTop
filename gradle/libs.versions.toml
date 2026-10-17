@@ -10,8 +10,10 @@ kotlin = "2.2.10"
 composeBom = "2026.02.01"
 room = "2.8.5"
 ksp = "2.3.10"
+glance = "1.1.1"
 
 [libraries]
+androidx-glance-appwidget = { module = "androidx.glance:glance-appwidget", version.ref = "glance" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 androidx-lifecycle-viewmodel-ktx = { module = "androidx.lifecycle:lifecycle-viewmodel-ktx", version.ref = "lifecycleRuntimeKtx" }
