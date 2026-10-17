@@ -20,6 +20,7 @@ import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import androidx.glance.appwidget.state.updateAppWidgetState
 import com.ontop.app.MainActivity
+import com.ontop.app.R
 import com.ontop.app.data.CardImageStore
 import com.ontop.app.data.OnTopDatabase
 import kotlinx.coroutines.CancellationException
@@ -73,7 +74,7 @@ class CardWidget : GlanceAppWidget() {
     }
 
     @Composable
-    private fun WidgetBody(context: Context, widgetId: Int, content: WidgetContent) {
+    internal fun WidgetBody(context: Context, widgetId: Int, content: WidgetContent) {
         val (cardId, title, image) = content
         val open = Intent(context, MainActivity::class.java).apply {
             data = Uri.parse("ontop://card/${cardId ?: 0}/widget/$widgetId")
@@ -86,20 +87,36 @@ class CardWidget : GlanceAppWidget() {
         }
         val size = LocalSize.current
         val fontScale = context.resources.configuration.fontScale.coerceAtLeast(1f)
-        val showImage = image != null && size.height.value >= 140 * fontScale
-        val imageHeight = if (showImage) minOf(64f, size.height.value * 0.25f) else 0f
-        val lines = ((size.height.value - 24 - 52 * fontScale - imageHeight) / (24 * fontScale))
+        val fontSize = if (size.height.value < 130 || size.width.value < 150) 16f else 18f
+        // Reserve the top toolbar and use a conservative line height, including Android font padding.
+        val textTop = maxOf(44f, size.height.value * 0.4f)
+        val lines = ((size.height.value - textTop - 12) / (fontSize * 1.4f * fontScale))
             .toInt().coerceIn(1, 30)
-        Column(GlanceModifier.fillMaxSize().background(Color(0xFFE4EBDD)).padding(12.dp)
-            .clickable(actionStartActivity(if (cardId != null) open else configure))) {
-            Text("OnTop", style = TextStyle(color = ColorProvider(Color(0xFF425343)), fontSize = 12.sp))
-            if (showImage) Image(ImageProvider(image!!), "Изображение карточки",
-                modifier = GlanceModifier.fillMaxWidth().height(imageHeight.dp), contentScale = ContentScale.Crop)
-            Text(title, modifier = GlanceModifier.fillMaxWidth().defaultWeight(),
-                style = TextStyle(color = ColorProvider(Color(0xFF252A28)), fontSize = 18.sp), maxLines = lines)
-            Text(if (cardId == null) "Выбрать другую" else "Сменить карточку", maxLines = 1,
-                style = TextStyle(fontSize = 12.sp, color = ColorProvider(Color(0xFF425343))),
-                modifier = GlanceModifier.clickable(actionStartActivity(configure)))
+        val backgrounds = listOf(0xFF304734, 0xFF9BAA8B, 0xFFE7D4BD, 0xFFDDA18A, 0xFFF5F0E9)
+        val background = Color(backgrounds[Math.floorMod(cardId ?: 0L, backgrounds.size.toLong()).toInt()])
+        val textColor = if (image != null || background == Color(0xFF304734)) Color.White else Color(0xFF243529)
+        Box(GlanceModifier.fillMaxSize().appWidgetBackground().background(background).cornerRadius(20.dp)) {
+            // A drawable gradient scales in RemoteViews; no extra raster or Compose Brush is needed.
+            if (image != null) {
+                Image(ImageProvider(image), null, modifier = GlanceModifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                Image(ImageProvider(R.drawable.widget_photo_shade), null,
+                    modifier = GlanceModifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+            }
+            Column(GlanceModifier.fillMaxSize().clickable(actionStartActivity(if (cardId != null) open else configure))
+                .padding(start = 12.dp, end = 12.dp, top = textTop.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.Bottom) {
+                Text(title, modifier = GlanceModifier.fillMaxWidth(),
+                    style = TextStyle(color = ColorProvider(textColor), fontSize = fontSize.sp), maxLines = lines)
+            }
+            Box(GlanceModifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
+                Box(GlanceModifier.size(44.dp).clickable(actionStartActivity(configure)).padding(6.dp)) {
+                    Box(GlanceModifier.fillMaxSize().background(ImageProvider(R.drawable.widget_icon_background)),
+                        contentAlignment = Alignment.Center) {
+                        Image(ImageProvider(R.drawable.ic_widget_change), "Сменить карточку",
+                            modifier = GlanceModifier.size(20.dp))
+                    }
+                }
+            }
         }
     }
 

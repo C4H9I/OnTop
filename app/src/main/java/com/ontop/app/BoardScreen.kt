@@ -2,10 +2,8 @@ package com.ontop.app
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,19 +12,13 @@ import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -40,7 +32,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
@@ -64,19 +55,17 @@ fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId
     var editorOpen by rememberSaveable { mutableStateOf(false) }
     var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
     var editing by rememberSaveable { mutableStateOf(false) }
+    val gridState = rememberLazyStaggeredGridState()
     val selected = state.cards.firstOrNull { it.id == selectedId }
 
-    LaunchedEffect(requestedCardId, state.loading, state.cards, state.saving) {
-        if (requestedCardId != null && !state.loading && !state.saving) {
+    // A widget launch waits for the user to save or discard the active draft.
+    LaunchedEffect(requestedCardId, state.loading, state.cards, state.saving, editing) {
+        if (requestedCardId != null && !state.loading && !state.saving && !editing) {
             if (state.cards.any { it.id == requestedCardId }) {
-                val openCard = {
-                    selectedId = requestedCardId
-                    editing = false
-                    editorOpen = true
-                    onCardRequestHandled()
-                }
-                // Release an unsaved image draft before switching away from an active editor.
-                if (editorOpen && editing) viewModel.cancelImageEdit(openCard) else openCard()
+                selectedId = requestedCardId
+                editing = false
+                editorOpen = true
+                onCardRequestHandled()
             } else {
                 viewModel.cardNotFound()
                 onCardRequestHandled()
@@ -86,9 +75,12 @@ fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId
 
     // Do not show the create form for a deleted card or before Room has loaded it.
     LaunchedEffect(state.loading, state.cards, selectedId) {
-        if (!state.loading && selectedId != null && selected == null) editorOpen = false
+        if (!state.loading && selectedId != null && selected == null) {
+            editorOpen = false
+            editing = false
+        }
     }
-    BoardContent(state, onAdd = {
+    if (!editorOpen || !editing) BoardContent(state, gridState = gridState, onAdd = {
         selectedId = null
         editing = true
         editorOpen = true
@@ -107,7 +99,7 @@ fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId
     }
     if (editorOpen && editing && (selectedId == null || selected != null)) {
         LaunchedEffect(selectedId) { viewModel.beginImageEdit(selected) }
-        CardEditorDialog(
+        CardEditorScreen(
             card = selected,
             saving = state.saving,
             error = state.error,
@@ -115,17 +107,18 @@ fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId
             onImageSelected = viewModel::importImage,
             onRemoveImage = viewModel::removeDraftImage,
             onPickerFailed = viewModel::imagePickerFailed,
-            onDismiss = { viewModel.cancelImageEdit { editorOpen = false } },
+            onDismiss = { viewModel.cancelImageEdit { editing = false; editorOpen = selected != null } },
             onSave = { title, description, size ->
-                viewModel.save(selected, title, description, size) { editorOpen = false }
+                viewModel.save(selected, title, description, size) { editorOpen = false; editing = false }
             },
-            onDelete = { selected?.let { card -> viewModel.delete(card) { editorOpen = false } } }
+            onDelete = { selected?.let { card -> viewModel.delete(card) { editorOpen = false; editing = false } } }
         )
     }
 }
 
 @Composable
-internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEntity) -> Unit) {
+internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEntity) -> Unit,
+    gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState()) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         floatingActionButton = {
@@ -158,6 +151,7 @@ internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnt
                     // Keep two columns on a normal phone; don't squeeze enlarged type into tiny lanes.
                     val columns = if ((maxWidth.value - 32f) / 2 >= 100f * LocalDensity.current.fontScale) 2 else 1
                     LazyVerticalStaggeredGrid(
+                        state = gridState,
                         columns = StaggeredGridCells.Fixed(columns),
                         modifier = Modifier.fillMaxSize().testTag("card-board"),
                         contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 96.dp),
@@ -195,94 +189,6 @@ private fun ThoughtTile(card: CardEntity, onClick: () -> Unit) {
         )
     ) {
         CardVisual(card, minHeight = minHeight)
-    }
-}
-
-@Composable
-private fun CardEditorDialog(
-    card: CardEntity?,
-    saving: Boolean,
-    error: String?,
-    imagePath: String?,
-    onImageSelected: (android.net.Uri) -> Unit,
-    onRemoveImage: () -> Unit,
-    onPickerFailed: () -> Unit,
-    onDismiss: () -> Unit,
-    onSave: (String, String, CardSize) -> Unit,
-    onDelete: () -> Unit
-) {
-    var title by rememberSaveable(card?.id) { mutableStateOf(card?.title.orEmpty()) }
-    var description by rememberSaveable(card?.id) { mutableStateOf(card?.description.orEmpty()) }
-    var size by rememberSaveable(card?.id) { mutableStateOf(card?.size ?: CardSize.NORMAL) }
-    var confirmDelete by rememberSaveable { mutableStateOf(false) }
-    val picker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
-        if (uri != null) onImageSelected(uri)
-    }
-
-    AlertDialog(
-        onDismissRequest = { if (!saving) onDismiss() },
-        title = { Text(if (card == null) "Новая карточка" else "Карточка") },
-        text = {
-            Column(
-                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedTextField(
-                    value = title, onValueChange = { title = it }, enabled = !saving,
-                    label = { Text("Короткая фраза") }, modifier = Modifier.fillMaxWidth(),
-                    minLines = 2, maxLines = 5
-                )
-                OutlinedTextField(
-                    value = description, onValueChange = { description = it }, enabled = !saving,
-                    label = { Text("Подробный текст") }, modifier = Modifier.fillMaxWidth(),
-                    minLines = 3, maxLines = 8
-                )
-                imagePath?.let { path ->
-                    LocalCardImage(path, Modifier.fillMaxWidth().height(200.dp), contentScale = ContentScale.Fit)
-                }
-                TextButton(onClick = {
-                    try { picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
-                    catch (_: Exception) { onPickerFailed() }
-                }, enabled = !saving) {
-                    Text(if (imagePath == null) "Выбрать изображение" else "Заменить изображение")
-                }
-                if (imagePath != null) {
-                    TextButton(onClick = onRemoveImage, enabled = !saving) { Text("Удалить изображение") }
-                }
-                Text("Размер карточки", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = size == CardSize.NORMAL, onClick = { size = CardSize.NORMAL },
-                        enabled = !saving, label = { Text("Обычная") })
-                    FilterChip(selected = size == CardSize.WIDE, onClick = { size = CardSize.WIDE },
-                        enabled = !saving, label = { Text("Широкая") })
-                }
-                if (card != null) {
-                    TextButton(onClick = { confirmDelete = true }, enabled = !saving) {
-                        Text("Удалить карточку", color = MaterialTheme.colorScheme.error)
-                    }
-                }
-                if (error != null) Text(error, color = MaterialTheme.colorScheme.error)
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(title, description, size) }, enabled = !saving && title.isNotBlank()) {
-                Text(if (saving) "Сохраняем…" else if (card == null) "Добавить" else "Сохранить")
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("Отмена") } }
-    )
-    if (confirmDelete && card != null) {
-        AlertDialog(
-            onDismissRequest = { if (!saving) confirmDelete = false },
-            title = { Text("Удалить карточку?") },
-            text = { Text("Карточка «${card.title}» будет удалена. Восстановить её не получится.") },
-            confirmButton = {
-                TextButton(onClick = onDelete, enabled = !saving) { Text("Удалить") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }, enabled = !saving) { Text("Отмена") }
-            }
-        )
     }
 }
 

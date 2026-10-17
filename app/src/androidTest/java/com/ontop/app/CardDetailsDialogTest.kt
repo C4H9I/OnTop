@@ -78,7 +78,6 @@ class CardDetailsDialogTest {
                     CardDetailsDialog(card, model, owner.lifecycle, state, onDismiss = {}, onEdit = {})
                 }
             }
-            var imeLayout = ""
             try { compose.waitUntil(5_000) {
                 compose.onAllNodesWithText("История размышлений · 30").fetchSemanticsNodes().isNotEmpty()
             }
@@ -87,52 +86,9 @@ class CardDetailsDialogTest {
             compose.onNodeWithTag("comment-input").assertIsDisplayed()
             compose.onNodeWithTag("send-comment").assertIsDisplayed()
             // A visible floating/collapsed IME can have zero bottom inset; require the full docked keyboard.
-            var expansions = 0
-            var lastExpansion = 0L
-            compose.waitUntil(5_000) {
-                var keyboardTop = 0
-                var keyboardBottom = 0
-                instrumentation.runOnMainSync {
-                    val root = android.view.inspector.WindowInspector.getGlobalWindowViews().firstOrNull {
-                        it.hasWindowFocus() && it.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
-                    }
-                    if (root != null) {
-                        keyboardBottom = root.rootWindowInsets.getInsets(android.view.WindowInsets.Type.ime()).bottom
-                        val location = IntArray(2)
-                        root.getLocationOnScreen(location)
-                        // Decor can already be resized by the IME. Use display bounds, not its reduced height.
-                        keyboardTop = root.context.getSystemService(android.view.WindowManager::class.java)
-                            .maximumWindowMetrics.bounds.bottom - keyboardBottom - location[1]
-                        imeLayout = "root=${root.height}, inset=$keyboardBottom, keyboardTop=$keyboardTop"
-                    }
-                }
-                if (keyboardBottom == 0 && expansions < 3 && android.os.SystemClock.uptimeMillis() - lastExpansion > 600) {
-                    val imeRoot = automation.windows.firstOrNull {
-                        it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
-                    }?.root
-                    val nodes = mutableListOf<android.view.accessibility.AccessibilityNodeInfo>()
-                    fun visit(node: android.view.accessibility.AccessibilityNodeInfo) {
-                        nodes.add(node)
-                        for (index in 0 until node.childCount) node.getChild(index)?.let(::visit)
-                    }
-                    imeRoot?.let(::visit)
-                    val labeled = nodes.firstOrNull {
-                        val label = "${it.text} ${it.contentDescription}".lowercase()
-                        "show on-screen keyboard" in label
-                    }
-                    val showKeyboard = generateSequence(labeled) { it.parent }.firstOrNull { it.isClickable }
-                        ?: nodes.filter { it.isClickable }.singleOrNull()
-                    imeLayout += ", IME nodes=" + nodes.joinToString { "${it.text}/${it.contentDescription}/${it.viewIdResourceName}" }
-                    showKeyboard?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
-                    expansions++
-                    lastExpansion = android.os.SystemClock.uptimeMillis()
-                }
-                keyboardBottom > 0 &&
-                    compose.onNodeWithTag("comment-input").fetchSemanticsNode().boundsInRoot.bottom <= keyboardTop + 1 &&
-                    compose.onNodeWithTag("send-comment").fetchSemanticsNode().boundsInRoot.bottom <= keyboardTop + 1
-            } } catch (error: Throwable) {
+            awaitDockedKeyboard(compose, "comment-input", "send-comment") } catch (error: Throwable) {
                 screenshot("details-keyboard-failure")
-                throw AssertionError(imeLayout, error)
+                throw error
             }
             screenshot("details-keyboard")
             // Scroll after the IME has resized the viewport: this establishes the user's intent to follow.

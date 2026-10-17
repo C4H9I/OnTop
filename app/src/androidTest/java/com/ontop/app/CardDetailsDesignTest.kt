@@ -95,20 +95,21 @@ class CardDetailsDesignTest(private val width: Int, private val fontScale: Float
         compose.onNodeWithTag("send-comment").assertIsNotEnabled()
         compose.onNodeWithTag("comment-input").performTextInput("Моя первая запись")
         compose.onNodeWithTag("send-comment").performClick()
-        // Showing the IME can leave the reader above the end; use the offered transition in that case.
-        if (compose.onAllNodesWithText("К последней записи").fetchSemanticsNodes().isNotEmpty()) {
-            compose.onNodeWithText("К последней записи").performClick()
-        }
+        // This constrained component test checks content, independently of the real IME's timing.
+        // Automatic following and the offered transition are covered by CardDetailsDialogTest.
+        compose.onNodeWithTag("reflection-list").performScrollToNode(hasText("Моя первая запись"))
         compose.onNodeWithText("Моя первая запись").assertIsDisplayed()
         compose.onNodeWithTag("comment-input").assert(SemanticsMatcher.expectValue(
             SemanticsProperties.EditableText, AnnotatedString("")))
         val date = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
             .withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(1_700_000_000_000))
         compose.onNodeWithText(date).assertExists()
+        compose.onNodeWithTag("reflection-list").performScrollToNode(hasTestTag("delete-comment-7"))
         compose.onNodeWithTag("delete-comment-7").performClick()
         compose.onNodeWithText("Удалить комментарий?").assertIsDisplayed()
         compose.onNodeWithText("Отмена").performClick()
         compose.runOnIdle { assertEquals(1, comments.size) }
+        compose.onNodeWithTag("reflection-list").performScrollToNode(hasTestTag("delete-comment-7"))
         compose.onNodeWithTag("delete-comment-7").performClick()
         compose.onNodeWithText("Удалить", substring = false).performClick()
         compose.runOnIdle { assertTrue(comments.isEmpty()) }
