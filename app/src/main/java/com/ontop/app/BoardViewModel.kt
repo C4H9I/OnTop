@@ -159,7 +159,10 @@ class BoardViewModel internal constructor(
         write(onSuccess, "Не удалось переименовать тему. Проверьте название и отсутствие дубликата.") { tagDao.rename(id, name) }
 
     internal fun deleteTag(id: Long, onSuccess: () -> Unit) =
-        write(onSuccess, "Не удалось удалить тему. Повторите попытку.") { tagDao.delete(id) }
+        write(onSuccess, "Не удалось удалить тему. Повторите попытку.") {
+            tagDao.delete(id)
+            refreshWidgets(0L)
+        }
 
     fun setBoardSort(mode: BoardSort) {
         if (mutableState.value.loading) return

@@ -63,9 +63,11 @@ class CardWidget : GlanceAppWidget() {
                     WidgetSelectionStore.mutex.withLock { WidgetRotation.select(selections, db, widgetId, false) }
                 }
             }
-            mode = selections.selection(widgetId).mode
-            cardId = selections.get(widgetId)
-            if (mode == WidgetMode.ROTATION && cardId == null) title = "Пока нет заметок"
+            val selection = selections.selection(widgetId)
+            mode = selection.mode
+            cardId = selection.cardId
+            if (mode == WidgetMode.ROTATION && cardId == null) title = if (selection.tagFilterEnabled)
+                "Нет заметок в выбранных темах. Измените настройки" else "Пока нет заметок"
             if (cardId != null) {
                 val card = withContext(Dispatchers.IO) {
                     (database ?: OnTopDatabase.getInstance(context)).cardDao().findById(cardId!!)

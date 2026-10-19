@@ -8,6 +8,7 @@ import androidx.glance.action.ActionParameters
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.action.ActionCallback
 import androidx.work.*
+import androidx.room.withTransaction
 import com.ontop.app.backup.BackupManager
 import com.ontop.app.data.OnTopDatabase
 import kotlinx.coroutines.CancellationException
@@ -23,31 +24,47 @@ internal object WidgetRotation {
         .getAppWidgetIds(ComponentName(context, CardWidgetReceiver::class.java)).toSet()
 
     // All entry points use backup lock -> widget lock. Restore holds the former already.
-    suspend fun configure(context: Context, id: Int, mode: WidgetMode, cardId: Long? = null) =
+    suspend fun configure(context: Context, id: Int, mode: WidgetMode, cardId: Long? = null,
+        tagIds: Set<Long> = emptySet(), tagFilterEnabled: Boolean = tagIds.isNotEmpty()) =
         BackupManager.dataAccess { WidgetSelectionStore.mutex.withLock {
             check(id in activeIds(context))
             val db = OnTopDatabase.getInstance(context)
             val store = WidgetSelectionStore(context)
+            val previous = store.selection(id)
             val chosen = if (mode == WidgetMode.FIXED) {
                 require(cardId != null && db.cardDao().findById(cardId) != null); cardId
-            } else chooseRotationNote(db.cardDao().allCards(), null)?.id
+            } else previous.currentId.takeIf { previous.mode == WidgetMode.ROTATION }
             store.save(id, WidgetSelection(mode, if (mode == WidgetMode.FIXED) chosen else null,
-                if (mode == WidgetMode.ROTATION) chosen else null, System.currentTimeMillis()))
+                currentId = if (mode == WidgetMode.ROTATION) chosen else null,
+                changedAt = if (mode == WidgetMode.ROTATION && previous.mode == WidgetMode.ROTATION)
+                    previous.changedAt else System.currentTimeMillis(),
+                tagIds = if (mode == WidgetMode.ROTATION) tagIds else emptySet(),
+                tagFilterEnabled = mode == WidgetMode.ROTATION && tagFilterEnabled))
+            if (mode == WidgetMode.ROTATION) select(store, db, id, false)
             reconcileLocked(context)
             updateCardWidget(context, id)
         } }
 
-    /** force=false repairs missing current cards without rotating an existing selection. */
+    /** force=false repairs missing/ineligible cards while keeping a still eligible selection. */
     internal suspend fun select(store: WidgetSelectionStore, db: OnTopDatabase, id: Int,
         force: Boolean, now: Long = System.currentTimeMillis(), minimumGap: Long = 1000): Boolean {
-        val state = store.selection(id)
-        if (state.mode != WidgetMode.ROTATION) return false
-        val cards = db.cardDao().allCards()
+        val previous = store.selection(id)
+        if (previous.mode != WidgetMode.ROTATION) return false
+        val (state, cards) = db.withTransaction {
+            val tags = if (previous.tagFilterEnabled) previous.tagIds.intersect(db.tagDao().all().map { it.id }.toSet()) else emptySet()
+            val cleaned = previous.copy(tagIds = tags)
+            cleaned to rotationCandidates(db.cardDao().allCards(),
+                if (cleaned.tagFilterEnabled) db.tagDao().allLinks() else emptyList(), tags, cleaned.tagFilterEnabled)
+        }
         val exists = cards.any { it.id == state.currentId }
-        if (exists && (!force || now >= state.changedAt && now - state.changedAt < minimumGap)) return false
+        if (exists && (!force || now >= state.changedAt && now - state.changedAt < minimumGap)) {
+            if (state != previous) store.save(id, state)
+            return state != previous
+        }
         val chosen = chooseRotationNote(cards, state.currentId)?.id
-        if (chosen == state.currentId) return false
-        store.save(id, state.copy(currentId = chosen, changedAt = now))
+        val next = if (chosen == state.currentId) state else state.copy(currentId = chosen, changedAt = now)
+        if (next == previous) return false
+        store.save(id, next)
         return true
     }
 

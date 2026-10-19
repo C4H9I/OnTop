@@ -30,11 +30,15 @@ import com.ontop.app.LocalCardImage
 import com.ontop.app.cardBackground
 import com.ontop.app.R
 import com.ontop.app.data.OnTopDatabase
+import com.ontop.app.data.TagEntity
+import com.ontop.app.backup.BackupManager
 import com.ontop.app.ui.theme.OnTopTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 
 class WidgetConfigurationActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,13 +55,24 @@ class WidgetConfigurationActivity : ComponentActivity() {
         setContent {
             OnTopTheme {
                 var cards by remember { mutableStateOf<List<CardEntity>>(emptyList()) }
+                var tags by remember { mutableStateOf<List<TagEntity>>(emptyList()) }
                 var loading by remember { mutableStateOf(true) }
                 var saving by remember { mutableStateOf(false) }
                 var error by remember { mutableStateOf<String?>(null) }
                 var retry by remember { mutableIntStateOf(0) }
                 var selectedId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
                 var mode by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(WidgetMode.FIXED) }
+                var selectedTags by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(arrayListOf<Long>()) }
+                var tagFilter by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
                 var initialized by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+                LaunchedEffect(Unit) {
+                    val db = withContext(Dispatchers.IO) { OnTopDatabase.getInstance(this@WidgetConfigurationActivity) }
+                    BackupManager.get(this@WidgetConfigurationActivity, db).revision.drop(1).collect {
+                        // Imported IDs may identify different notes/themes. Reload the reset widget state.
+                        initialized = false
+                        retry++
+                    }
+                }
                 LaunchedEffect(retry) {
                     loading = true
                     error = null
@@ -66,10 +81,18 @@ class WidgetConfigurationActivity : ComponentActivity() {
                             val selection = WidgetSelectionStore(this@WidgetConfigurationActivity).selection(widgetId)
                             selectedId = selection.cardId
                             mode = selection.mode
+                            selectedTags = ArrayList(selection.tagIds)
+                            tagFilter = selection.tagFilterEnabled
                             initialized = true
                         }
-                        val dao = withContext(Dispatchers.IO) { OnTopDatabase.getInstance(this@WidgetConfigurationActivity).cardDao() }
-                        dao.observeCards().collect { cards = it; loading = false }
+                        val db = withContext(Dispatchers.IO) { OnTopDatabase.getInstance(this@WidgetConfigurationActivity) }
+                        combine(db.cardDao().observeCards(), db.tagDao().observeTags()) { notes, topics ->
+                            notes to topics.map { it.tag }
+                        }.collect { (notes, topics) ->
+                            cards = notes; tags = topics
+                            selectedTags = ArrayList(selectedTags.filter { id -> topics.any { it.id == id } })
+                            loading = false
+                        }
                     } catch (e: CancellationException) { throw e
                     } catch (_: Exception) { error = "Не удалось загрузить карточки"; loading = false }
                 }
@@ -79,21 +102,42 @@ class WidgetConfigurationActivity : ComponentActivity() {
                         WidgetModeChoices(mode, !saving) { mode = it }
                         if (mode == WidgetMode.ROTATION) {
                             Text("Заметки меняются примерно каждые 30 минут. Более важные появляются чаще")
-                            Button(enabled = !saving && !loading, onClick = {
+                            Button(enabled = !saving && !loading && error == null, onClick = {
                                 saving = true
                                 lifecycleScope.launch {
                                     try {
-                                        WidgetRotation.configure(this@WidgetConfigurationActivity, widgetId, WidgetMode.ROTATION)
+                                        WidgetRotation.configure(this@WidgetConfigurationActivity, widgetId, WidgetMode.ROTATION,
+                                            tagIds = selectedTags.toSet(), tagFilterEnabled = tagFilter)
                                         setResult(RESULT_OK, result); finish()
                                     } catch (e: CancellationException) { throw e
                                     } catch (_: Exception) { error = "Не удалось настроить виджет. Повторите попытку."; saving = false }
                                 }
-                            }) { Text("Включить ротацию") }
+                            }) { Text("Сохранить ротацию") }
                         }
                         if (loading) Text("Загрузка…")
                         if (mode == WidgetMode.FIXED && !loading && error == null && cards.isEmpty()) Text("Сначала создайте карточку в OnTop, затем добавьте виджет.")
                         error?.let { Text(it); TextButton(onClick = { retry++ }, enabled = !saving) { Text("Повторить") } }
                         LazyColumn(Modifier.weight(1f)) {
+                            if (mode == WidgetMode.ROTATION && !loading) {
+                                item {
+                                    Text("Темы", style = MaterialTheme.typography.titleMedium)
+                                    Text("Несколько тем: заметка подходит при совпадении хотя бы одной.",
+                                        style = MaterialTheme.typography.bodySmall)
+                                    WidgetTopicChoice("Все активные заметки", !tagFilter, !saving, "widget-topics-all") {
+                                        selectedTags = arrayListOf(); tagFilter = false
+                                    }
+                                    if (tagFilter && selectedTags.isEmpty()) Text(
+                                        "Выбранные темы удалены. Выберите другие темы или все заметки.",
+                                        color = MaterialTheme.colorScheme.error)
+                                    if (tags.isEmpty()) Text("Тем пока нет")
+                                }
+                                items(tags, key = { "topic-${it.id}" }) { tag ->
+                                    WidgetTopicChoice(tag.name, tag.id in selectedTags, !saving, "widget-topic-${tag.id}") {
+                                        selectedTags = ArrayList(if (tag.id in selectedTags) selectedTags - tag.id else selectedTags + tag.id)
+                                        tagFilter = selectedTags.isNotEmpty()
+                                    }
+                                }
+                            }
                             items(if (mode == WidgetMode.FIXED) cards else emptyList(), key = { it.id }) { card ->
                                 WidgetCardChoice(card, selectedId == card.id, enabled = !saving, onClick = {
                                     if (saving) return@WidgetCardChoice
@@ -119,6 +163,17 @@ class WidgetConfigurationActivity : ComponentActivity() {
                 }
             }
         }
+    }
+}
+
+@Composable
+internal fun WidgetTopicChoice(title: String, selected: Boolean, enabled: Boolean,
+    testId: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().selectable(selected, enabled = enabled, role = Role.Checkbox,
+        onClick = onClick).testTag(testId).padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = selected, onCheckedChange = null, enabled = enabled)
+        Text(title, modifier = Modifier.weight(1f).padding(end = 8.dp))
     }
 }
 
