@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface CardCommentDao {
+    @Query("SELECT * FROM card_comments ORDER BY id")
+    suspend fun all(): List<CardCommentEntity>
     @Query("SELECT * FROM card_comments WHERE cardId = :cardId ORDER BY createdAt ASC, id ASC")
     fun observeComments(cardId: Long): Flow<List<CardCommentEntity>>
 

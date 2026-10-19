@@ -7,13 +7,28 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [CardEntity::class, CardCommentEntity::class, ReminderEntity::class], version = 6, exportSchema = true)
+@Database(entities = [CardEntity::class, CardCommentEntity::class, ReminderEntity::class, TagEntity::class, CardTagCrossRef::class], version = 8, exportSchema = true)
 abstract class OnTopDatabase : RoomDatabase() {
     abstract fun cardDao(): CardDao
     abstract fun cardCommentDao(): CardCommentDao
     abstract fun reminderDao(): ReminderDao
+    abstract fun tagDao(): TagDao
 
     companion object {
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `tags` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `normalizedName` TEXT NOT NULL, `createdAt` INTEGER NOT NULL)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_tags_normalizedName` ON `tags` (`normalizedName`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `card_tag_refs` (`cardId` INTEGER NOT NULL, `tagId` INTEGER NOT NULL, PRIMARY KEY(`cardId`, `tagId`), FOREIGN KEY(`cardId`) REFERENCES `cards`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE, FOREIGN KEY(`tagId`) REFERENCES `tags`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_card_tag_refs_cardId` ON `card_tag_refs` (`cardId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_card_tag_refs_tagId` ON `card_tag_refs` (`tagId`)")
+            }
+        }
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cards ADD COLUMN importance INTEGER NOT NULL DEFAULT 50")
+            }
+        }
         val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE cards ADD COLUMN formatting TEXT")
@@ -56,7 +71,7 @@ abstract class OnTopDatabase : RoomDatabase() {
                 context.applicationContext,
                 OnTopDatabase::class.java,
                 "ontop.db"
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).build().also { instance = it }
         }
     }
 }

@@ -78,10 +78,10 @@ class MultimediaNoteTest {
             body.performTextInput("before after")
             body.performTextInputSelection(TextRange(0, 12)); action("Жирный"); action("Курсив")
             body.performTextInputSelection(TextRange(6)); action("Вставить изображение")
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("Удалить изображение из текста").fetchSemanticsNodes().size == 1 }
+            compose.waitUntil(5_000) { compose.onAllNodes(inlineImages()).fetchSemanticsNodes().size == 1 }
             textAfterMedia().performScrollTo().performTextInput("AFTER")
             textAfterMedia().performTextInputSelection(TextRange(0)); action("Вставить изображение")
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("Удалить изображение из текста").fetchSemanticsNodes().size == 2 }
+            compose.waitUntil(5_000) { compose.onAllNodes(inlineImages()).fetchSemanticsNodes().size == 2 }
             textAfterMedia().performScrollTo().performTextInputSelection(TextRange(0)); action("Вставить видео")
             compose.onNodeWithText("Ссылка YouTube").performTextInput("https://youtu.be/M7lc1UVf-VE?t=12s")
             compose.onNodeWithText("Вставить видео", useUnmergedTree = false).performClick()
@@ -103,12 +103,13 @@ class MultimediaNoteTest {
             assertTrue(rich.has(RichKind.BOLD, 0, 6)); assertTrue(rich.has(RichKind.ITALIC, 0, 6))
             rich.imagePaths().forEach { assertTrue(CardImageStore(app).resolve(it).exists()) }
             compose.onNodeWithTag("card-${saved.id}").performClick()
-            compose.onAllNodesWithText("Открыть изображение").onFirst().performScrollTo().performClick()
+            compose.onAllNodes(inlineImages()).onFirst().performScrollTo().performClick()
             compose.onNodeWithTag("full-note-image").assertIsDisplayed()
             compose.onNodeWithText("Закрыть изображение").performClick()
             capture("multimedia-note-view")
             compose.onNodeWithText("Редактировать").performClick()
-            compose.onAllNodesWithText("Удалить изображение из текста").onFirst().performScrollTo().performClick()
+            compose.onAllNodes(inlineImages()).onFirst().performScrollTo().performTouchInput { longClick() }
+            compose.onNodeWithText("Удалить изображение из текста").performClick()
             compose.onNodeWithTag("editor-save").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithTag("card-editor").fetchSemanticsNodes().isEmpty() }
             rich = RichTextCodec.decode(db.cardDao().findById(saved.id)!!.description, db.cardDao().findById(saved.id)!!.formatting)

@@ -9,12 +9,17 @@ import com.ontop.app.data.CardCommentEntity
 import com.ontop.app.data.CardImageStore
 import com.ontop.app.data.CardSize
 import com.ontop.app.data.OnTopDatabase
+import com.ontop.app.data.TagEntity
+import com.ontop.app.data.CardTagCrossRef
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.ontop.app.widget.notifyCardWidgets
 import com.ontop.app.text.RichTextCodec
 import com.ontop.app.text.imagePaths
@@ -25,13 +30,18 @@ data class BoardState(
     val loading: Boolean = true,
     val saving: Boolean = false,
     val error: String? = null,
-    val draftImagePath: String? = null
+    val draftImagePath: String? = null,
+    val sortMode: BoardSort = BoardSort.MANUAL,
+    val tags: List<TagEntity> = emptyList(),
+    val cardTags: List<CardTagCrossRef> = emptyList(),
+    val selectedTagId: Long? = null
 )
 
 class BoardViewModel internal constructor(
     application: Application,
     database: OnTopDatabase,
-    internal val backup: BackupManager
+    internal val backup: BackupManager,
+    private val boardPreferences: BoardPreferences = BoardPreferences(application)
 ) : AndroidViewModel(application) {
     @JvmOverloads constructor(application: Application, database: OnTopDatabase = OnTopDatabase.getInstance(application)) :
         this(application, database, BackupManager.get(application, database))
@@ -50,6 +60,7 @@ class BoardViewModel internal constructor(
     internal fun recoverBackup() { viewModelScope.launch { backup.recover() } }
     internal val sliderSession = NoteSliderSession()
     private val dao = database.cardDao()
+    private val tagDao = database.tagDao()
     private val commentDao = database.cardCommentDao()
     private val reminderDao = database.reminderDao()
     private val reminders = com.ontop.app.reminders.ReminderManager(application, database)
@@ -135,6 +146,36 @@ class BoardViewModel internal constructor(
     }
     private val mutableState = MutableStateFlow(BoardState())
     val state = mutableState.asStateFlow()
+    private val sortMutex = Mutex()
+
+    internal fun selectTag(id: Long?) {
+        mutableState.update { it.copy(selectedTagId = id?.takeIf { key -> it.tags.any { tag -> tag.id == key } }) }
+    }
+
+    internal fun createTag(name: String, onSuccess: () -> Unit) =
+        write(onSuccess, "Не удалось создать тему. Проверьте название и отсутствие дубликата.") { tagDao.create(name) }
+
+    internal fun renameTag(id: Long, name: String, onSuccess: () -> Unit) =
+        write(onSuccess, "Не удалось переименовать тему. Проверьте название и отсутствие дубликата.") { tagDao.rename(id, name) }
+
+    internal fun deleteTag(id: Long, onSuccess: () -> Unit) =
+        write(onSuccess, "Не удалось удалить тему. Повторите попытку.") { tagDao.delete(id) }
+
+    fun setBoardSort(mode: BoardSort) {
+        if (mutableState.value.loading) return
+        viewModelScope.launch {
+            sortMutex.withLock {
+                if (mutableState.value.sortMode == mode) return@withLock
+                try {
+                    boardPreferences.saveSort(mode)
+                    mutableState.update { it.copy(sortMode = mode) }
+                } catch (e: CancellationException) { throw e
+                } catch (_: Exception) {
+                    mutableState.update { it.copy(error = "Не удалось сохранить порядок доски. Повторите выбор.") }
+                }
+            }
+        }
+    }
 
     init {
         viewModelScope.launch {
@@ -144,7 +185,7 @@ class BoardViewModel internal constructor(
                 imageEditorActive = false
                 originalImagePath = null
                 sliderSession.currentId = null; sliderSession.index = 0
-                mutableState.update { state -> state.copy(draftImagePath = null) }
+                mutableState.update { state -> state.copy(draftImagePath = null, selectedTagId = null) }
                 try { BackupManager.dataAccess { obsolete.forEach { path -> removeImage(path) } }
                 } catch (error: CancellationException) { throw error
                 } catch (_: Exception) {
@@ -155,8 +196,12 @@ class BoardViewModel internal constructor(
         viewModelScope.launch {
             try {
                 backup.recover()
-                dao.observeCards().collect { cards ->
-                    mutableState.update { it.copy(cards = cards, loading = false) }
+                val sortMode = boardPreferences.loadSort()
+                mutableState.update { it.copy(sortMode = sortMode) }
+                combine(dao.observeCards(), tagDao.observeTags()) { cards, tags -> cards to tags }.collect { (cards, topics) ->
+                    val tags = topics.map { it.tag }
+                    mutableState.update { it.copy(cards = cards, tags = tags, cardTags = topics.flatMap { topic -> topic.links },
+                        selectedTagId = it.selectedTagId?.takeIf { id -> tags.any { tag -> tag.id == id } }, loading = false) }
                 }
             } catch (exception: CancellationException) {
                 throw exception
@@ -174,28 +219,30 @@ class BoardViewModel internal constructor(
 
     internal fun saveNote(card: CardEntity?, title: String, description: String, size: CardSize,
         reminder: com.ontop.app.reminders.ReminderDraft?, reminderChanged: Boolean, onSuccess: () -> Unit,
-        formatting: String? = if (description == card?.description) card?.formatting else null) {
+        formatting: String? = if (description == card?.description) card?.formatting else null,
+        importance: Int = card?.importance ?: 50, tagIds: List<Long>? = null, newTagNames: List<String> = emptyList()) {
         if (title.isBlank()) return
+        require(importance in 0..100)
         write(onSuccess, "Не удалось сохранить заметку и напоминание. Черновик сохранён на экране — повторите сохранение.") {
             val now = System.currentTimeMillis()
             val imagePath = mutableState.value.draftImagePath
             val document = if (card == null) {
                 CardEntity(
                     title = title.trim(), description = description, size = size,
-                    createdAt = now, updatedAt = now, sortOrder = 0, imagePath = imagePath, formatting = formatting
+                    createdAt = now, updatedAt = now, sortOrder = 0, imagePath = imagePath, formatting = formatting, importance = importance
                 )
             } else {
                 card.copy(
                     title = title.trim(), description = description, size = size, updatedAt = now,
-                    imagePath = imagePath, formatting = formatting
+                    imagePath = imagePath, formatting = formatting, importance = importance
                 )
             }
-            reminders.saveNote(document, card == null, reminder, reminderChanged)
+            reminders.saveNote(document, card == null, reminder, reminderChanged, tagIds, newTagNames)
             val oldInline = card?.let { RichTextCodec.decode(it.description, it.formatting).imagePaths() }.orEmpty()
             (oldInline + inlineDraftPaths).forEach { removeImage(it) }
             inlineDraftPaths.clear()
             // The previous file remains usable until the new database reference has committed.
-            if (card != null) refreshWidgets(card.id)
+            refreshWidgets(card?.id ?: 0L)
             if (card?.imagePath != imagePath) removeImage(card?.imagePath)
             imageEditorActive = false
         }

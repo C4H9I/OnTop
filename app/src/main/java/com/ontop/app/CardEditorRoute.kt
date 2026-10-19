@@ -28,10 +28,7 @@ internal fun CardEditorRoute(card: CardEntity?, state: BoardState, viewModel: Bo
     var requestingPermission by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     // Capture the document being saved while the system permission dialog is open.
-    var pendingTitle by rememberSaveable { mutableStateOf<String?>(null) }
-    var pendingDescription by rememberSaveable { mutableStateOf("") }
-    var pendingSize by rememberSaveable { mutableStateOf(CardSize.NORMAL) }
-    var pendingFormatting by rememberSaveable { mutableStateOf<String?>(null) }
+    var pending by rememberSaveable { mutableStateOf<PendingNoteSave?>(null) }
     val changed = reminder != initialReminder
     LaunchedEffect(card?.id, retry) {
         if (!loaded && card != null) {
@@ -45,30 +42,35 @@ internal fun CardEditorRoute(card: CardEntity?, state: BoardState, viewModel: Bo
             } catch (_: Exception) { loadError = "Не удалось загрузить напоминание. Повторите попытку перед сохранением." }
         }
     }
-    fun save(title: String, description: String, size: CardSize, formatting: String?) {
-        viewModel.saveNote(card, title, description, size, reminder, changed, onSaved, formatting)
+    fun save(draft: PendingNoteSave) {
+        viewModel.saveNote(card, draft.title, draft.description, draft.size, reminder, changed, onSaved,
+            draft.formatting, draft.importance, draft.ids, draft.names)
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         requestingPermission = false
-        pendingTitle?.let { save(it, pendingDescription, pendingSize, pendingFormatting) }
-        pendingTitle = null
+        pending?.let { save(it) }
+        pending = null
     }
     CardEditorScreen(card, state.saving || requestingPermission, state.error, state.draftImagePath,
         onImageSelected = viewModel::importImage, onRemoveImage = viewModel::removeDraftImage,
         onInlineImport = viewModel::importInlineImage, onInlineDraftPaths = viewModel::trackInlineDraft,
         onPickerFailed = viewModel::imagePickerFailed, onDismiss = onDismiss,
         onSave = { _, _, _ -> },
-        onSaveFormatted = { title, description, size, formatting ->
+        availableTags = state.tags, initialTagIds = state.cardTags.filter { it.cardId == card?.id }.map { it.tagId },
+        onSaveTagged = { title, description, size, formatting, importance, ids, names ->
+            val draft = PendingNoteSave(title, description, size, formatting, importance, ArrayList(ids), ArrayList(names))
             if (changed && reminder?.enabled == true && Build.VERSION.SDK_INT >= 33 &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                pendingTitle = title; pendingDescription = description; pendingSize = size
-                pendingFormatting = formatting
+                pending = draft
                 requestingPermission = true
                 permission.launch(Manifest.permission.POST_NOTIFICATIONS)
-            } else save(title, description, size, formatting)
+            } else save(draft)
         }, onDelete = onDelete, reminderChanged = changed, remindersReady = loaded,
         onReminders = { reminderOpen = true }, reminderLoadError = loadError, onRetryReminders = { retry++ })
     if (reminderOpen) {
         ReminderDraftDialog(reminder, onApply = { reminder = it }, onDismiss = { reminderOpen = false })
     }
 }
+
+private data class PendingNoteSave(val title: String, val description: String, val size: CardSize,
+    val formatting: String?, val importance: Int, val ids: ArrayList<Long>, val names: ArrayList<String>) : java.io.Serializable

@@ -33,6 +33,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.ontop.app.data.CardEntity
 import com.ontop.app.data.CardSize
+import com.ontop.app.data.TagEntity
 import com.ontop.app.text.*
 
 /** One editor route for both creation and updates; persistence stays in BoardViewModel. */
@@ -56,7 +57,10 @@ internal fun CardEditorScreen(
     onRetryReminders: () -> Unit = {},
     onSaveFormatted: ((String, String, CardSize, String?) -> Unit)? = null,
     onInlineImport: ((Uri, (String) -> Unit) -> Unit)? = null,
-    onInlineDraftPaths: (Set<String>) -> Unit = {}
+    onInlineDraftPaths: (Set<String>) -> Unit = {},
+    onSaveWithImportance: ((String, String, CardSize, String?, Int) -> Unit)? = null,
+    availableTags: List<TagEntity> = emptyList(), initialTagIds: List<Long> = emptyList(),
+    onSaveTagged: ((String, String, CardSize, String?, Int, List<Long>, List<String>) -> Unit)? = null
 ) {
     // Capture the initial values once: a Room emission must not reset an active draft.
     val initialTitle = rememberSaveable(card?.id) { card?.title.orEmpty() }
@@ -68,6 +72,9 @@ internal fun CardEditorScreen(
     var document by rememberSaveable(card?.id) { mutableStateOf(initialDocument) }
     val description = document.text
     var size by rememberSaveable(card?.id) { mutableStateOf(initialSize) }
+    val initialImportance = rememberSaveable(card?.id) { card?.importance ?: 50 }
+    var importance by rememberSaveable(card?.id) { mutableIntStateOf(initialImportance) }
+    val topics = rememberEditorTopics(card?.id, initialTagIds)
     var confirmDiscard by rememberSaveable(card?.id) { mutableStateOf(false) }
     var confirmDelete by rememberSaveable(card?.id) { mutableStateOf(false) }
     var displayOpen by rememberSaveable(card?.id) { mutableStateOf(false) }
@@ -87,7 +94,8 @@ internal fun CardEditorScreen(
     val formScroll = rememberScrollState()
     val dismissKeyboard = { focus.clearFocus(); bodyController.view?.clearFocus(); keyboard?.hide(); Unit }
     val changed = title != initialTitle || document != initialDocument ||
-        size != initialSize || imagePath != initialImage || reminderChanged
+        size != initialSize || imagePath != initialImage || reminderChanged || importance != initialImportance ||
+        topics.changed
     val leave = {
         if (!saving) {
             if (changed) confirmDiscard = true else onDismiss()
@@ -127,7 +135,9 @@ internal fun CardEditorScreen(
     }
     val imeOpen = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
     val saveDocument = {
-        if (onSaveFormatted != null) onSaveFormatted(title, description, size, RichTextCodec.encode(document))
+        if (onSaveTagged != null) onSaveTagged(title, description, size, RichTextCodec.encode(document), importance, topics.ids.toList(), topics.names.toList())
+        else if (onSaveWithImportance != null) onSaveWithImportance(title, description, size, RichTextCodec.encode(document), importance)
+        else if (onSaveFormatted != null) onSaveFormatted(title, description, size, RichTextCodec.encode(document))
         else onSave(title, description, size)
     }
 
@@ -215,6 +225,7 @@ internal fun CardEditorScreen(
                     horizontalArrangement = Arrangement.SpaceEvenly) {
                     TextButton(onClick = { dismissKeyboard(); onReminders() }, enabled = !saving && remindersReady) { Text("Напоминания") }
                     TextButton(onClick = { dismissKeyboard(); displayOpen = true }, enabled = !saving) { Text("Отображение") }
+                    TextButton(onClick = { dismissKeyboard(); topics.open = true }, enabled = !saving) { Text("Темы") }
                     TextButton(onClick = { dismissKeyboard(); otherOpen = true }, enabled = !saving) { Text("Другие настройки") }
                 }
             }
@@ -253,12 +264,20 @@ internal fun CardEditorScreen(
             title = { Text("Другие настройки") }, text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     Text("Заметка хранится только на этом устройстве.")
+                    Text("Важность: $importance%", style = MaterialTheme.typography.titleMedium)
+                    Slider(value = importance.toFloat(), onValueChange = { importance = (kotlin.math.round(it / 5f).toInt() * 5).coerceIn(0, 100) },
+                        valueRange = 0f..100f, steps = 19, enabled = !saving,
+                        modifier = Modifier.testTag("editor-importance").semantics { contentDescription = "Важность заметки" })
+                    Text("Как часто возвращать внимание к этой мысли. Это не срочность задачи.",
+                        style = MaterialTheme.typography.bodySmall)
                     if (card != null) TextButton(onClick = { otherOpen = false; confirmDelete = true }, enabled = !saving) {
                         Text("Удалить карточку", color = MaterialTheme.colorScheme.error)
                     }
                 }
             }, confirmButton = { TextButton(onClick = { otherOpen = false }) { Text("Готово") } })
     }
+    if (topics.open) TagPickerDialog(availableTags, topics.ids, topics.names, !saving,
+        onChange = { ids, names -> topics.ids = ids; topics.names = names }, onClose = { topics.open = false })
     if (confirmDiscard) {
         AlertDialog(onDismissRequest = { confirmDiscard = false }, title = { Text("Отменить изменения?") },
             confirmButton = {

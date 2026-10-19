@@ -2,6 +2,7 @@ package com.ontop.app.data
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import androidx.room.ColumnInfo
 
 enum class CardSize { NORMAL, WIDE }
 
@@ -15,5 +16,6 @@ data class CardEntity(
     val updatedAt: Long,
     val sortOrder: Long,
     val imagePath: String? = null,
-    val formatting: String? = null
+    val formatting: String? = null,
+    @ColumnInfo(defaultValue = "50") val importance: Int = 50
 )

@@ -2,16 +2,17 @@ package com.ontop.app.text
 
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -24,22 +25,25 @@ internal fun NoteMediaView(block: NoteMedia, modifier: Modifier = Modifier, onRe
     active: Boolean = true) {
     val mediaActive = active && LocalNoteMediaActive.current
     var fullImage by remember { mutableStateOf(false) }
+    var imageMenu by remember { mutableStateOf(false) }
     var playing by remember { mutableStateOf(false) }
-    LaunchedEffect(mediaActive) { if (!mediaActive) { playing = false; fullImage = false } }
+    LaunchedEffect(mediaActive) { if (!mediaActive) { playing = false; fullImage = false; imageMenu = false } }
     if (block.kind == MediaKind.YOUTUBE) {
         YouTubePreview(block.video!!, modifier.fillMaxWidth().testTag("media-${block.id}"),
             onPlay = { if (mediaActive) playing = true }, onRemove = onRemove)
-    } else Surface(modifier.fillMaxWidth().testTag("media-${block.id}"), shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceVariant) {
-        Column {
-            if (block.kind == MediaKind.IMAGE) {
-                LocalCardImage(block.path!!, Modifier.fillMaxWidth().clickable { fullImage = true },
-                    contentScale = ContentScale.Fit, maxSide = 1000, adaptHeight = true)
-                TextButton(onClick = { fullImage = true }) { Text("Открыть изображение") }
-            }
-            if (onRemove != null) TextButton(onClick = onRemove, modifier = Modifier.testTag("remove-media-${block.id}")) {
-                Text("Удалить изображение из текста")
-            }
+    } else Box(modifier.fillMaxWidth().testTag("media-${block.id}")) {
+        LocalCardImage(block.path!!, Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small)
+            .testTag("inline-image-${block.id}").combinedClickable(
+                role = Role.Button, onClickLabel = "Открыть изображение",
+                onClick = { if (mediaActive) fullImage = true },
+                onLongClickLabel = if (onRemove != null) "Действия с изображением" else null,
+                onLongClick = if (onRemove != null) ({ if (mediaActive) imageMenu = true }) else null),
+            contentScale = ContentScale.Fit, maxSide = 1000, adaptHeight = true)
+        if (onRemove != null) DropdownMenu(expanded = imageMenu, onDismissRequest = { imageMenu = false }) {
+            DropdownMenuItem(text = { Text("Открыть изображение") }, onClick = { imageMenu = false; fullImage = true })
+            DropdownMenuItem(text = { Text("Удалить изображение из текста") },
+                modifier = Modifier.testTag("remove-media-${block.id}"),
+                onClick = { imageMenu = false; onRemove() })
         }
     }
     if (fullImage && mediaActive) Dialog(onDismissRequest = { fullImage = false },

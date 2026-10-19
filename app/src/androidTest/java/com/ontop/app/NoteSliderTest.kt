@@ -59,7 +59,7 @@ class NoteSliderTest {
         compose.setContent { OnTopTheme { Column(Modifier.verticalScroll(rememberScrollState())) {
             MultimediaNoteView(document, active)
         } } }
-        compose.onAllNodesWithText("Открыть изображение").assertCountEquals(2)
+        compose.onAllNodes(inlineImages()).assertCountEquals(2)
         compose.onNodeWithTag("youtube-player").assertDoesNotExist()
         compose.onNodeWithTag("youtube-preview-M7lc1UVf-VE").performScrollTo().performClick()
         compose.onNodeWithTag("youtube-player").assertExists()

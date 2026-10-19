@@ -32,6 +32,7 @@ internal class BackupManager internal constructor(
     private val root: File = File(context.noBackupFilesDir, "ontop-backup"),
     private val refreshWidgets: suspend () -> Unit = {
         WidgetSelectionStore(context).clear()
+        WidgetRotation.reconcile(context)
         val ids = AppWidgetManager.getInstance(context).getAppWidgetIds(ComponentName(context, CardWidgetReceiver::class.java))
         ids.forEach { updateCardWidget(context, it) }
     },
@@ -94,7 +95,7 @@ internal class BackupManager internal constructor(
     }
 
     internal suspend fun snapshot(): BackupData = db.withTransaction {
-        BackupData(db.cardDao().allCards(), db.cardCommentDao().all(), db.reminderDao().all())
+        BackupData(db.cardDao().allCards(), db.cardCommentDao().all(), db.reminderDao().all(), db.tagDao().all(), db.tagDao().allLinks())
     }
 
     private fun newStage(): File {
@@ -129,7 +130,7 @@ internal class BackupManager internal constructor(
             val data = BackupFormat.read(archive, File(stage, "content"))
             prepared = stage to data
             mutableState.value = BackupState(busy = true,
-                ready = "Заметок: ${data.cards.size}, комментариев: ${data.comments.size}, изображений: ${data.paths().size}, правил напоминаний: ${data.reminders.size}.")
+                ready = "Заметок: ${data.cards.size}, тем: ${data.tags.size}, комментариев: ${data.comments.size}, изображений: ${data.paths().size}, правил напоминаний: ${data.reminders.size}.")
         } finally { if (prepared?.first != stage) stage.deleteRecursively() }
     }
 
@@ -156,7 +157,7 @@ internal class BackupManager internal constructor(
                         formatting = if (doc.imagePaths().isEmpty()) card.formatting else RichTextCodec.encode(doc.copy(
                             media = doc.media.map { block -> block.path?.let { block.copy(path = paths.getValue(it)) } ?: block })))
                 }, reminders = original.reminders.map { it.copy(id = newId(), nextAt = null, snoozeAt = null) })
-                writeJournal(JSONObject().put("fingerprint", BackupFormat.fingerprint(incoming))
+                writeJournal(JSONObject().put("fingerprint", BackupFormat.fingerprint(incoming)).put("fingerprintVersion", 2)
                     .put("generation", UUID.randomUUID().toString())
                     .put("oldRules", JSONArray(old.reminders.map { it.id })).put("oldFiles", JSONArray(old.paths().toList()))
                     .put("newFiles", JSONArray(paths.values.toList())))
@@ -176,7 +177,10 @@ internal class BackupManager internal constructor(
                 progress("Замена данных…")
                 db.withTransaction {
                     db.cardDao().deleteAll() // FK cascades remove old comments and rules in the same transaction.
+                    db.tagDao().deleteAll()
+                    incoming.tags.forEach { db.tagDao().insert(it) }
                     incoming.cards.forEach { db.cardDao().insert(it) }
+                    incoming.cardTags.forEach { db.tagDao().insertLink(it) }
                     incoming.comments.forEach { db.cardCommentDao().insert(it) }
                     incoming.reminders.forEach { db.reminderDao().insert(it) }
                     checkpoint("transaction")
@@ -206,7 +210,7 @@ internal class BackupManager internal constructor(
         val record = journal.openRead().use { JSONObject(it.readBytes().toString(Charsets.UTF_8)) }
         fun strings(name: String): List<String> = record.getJSONArray(name).let { a -> (0 until a.length()).map { a.getString(it) } }
         val current = reminders.withDataLock { snapshot() }
-        val committed = BackupFormat.fingerprint(current) == record.getString("fingerprint")
+        val committed = BackupFormat.fingerprint(current, includeTags = record.optInt("fingerprintVersion", 1) >= 2) == record.getString("fingerprint")
         if (committed) {
             progress("Обновление напоминаний и виджетов…")
             val ids = record.getJSONArray("oldRules").let { a -> (0 until a.length()).map { a.getLong(it) } }

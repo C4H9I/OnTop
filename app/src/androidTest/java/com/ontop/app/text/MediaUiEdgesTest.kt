@@ -80,7 +80,7 @@ class MediaUiEdgesTest {
         compose.setContent { OnTopTheme { NoteMediaView(NoteMedia("missing", 0, MediaKind.IMAGE,
             "images/00000000-0000-0000-0000-000000000000.jpg")) } }
         compose.waitUntil(5_000) { compose.onAllNodesWithText("Изображение недоступно").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Открыть изображение").performClick()
+        compose.onNodeWithTag("inline-image-missing").performClick()
         compose.onNodeWithTag("full-note-image").assertIsDisplayed()
         compose.onNodeWithText("Закрыть изображение").performClick()
         compose.onNodeWithTag("full-note-image").assertDoesNotExist()

@@ -159,7 +159,8 @@ class InlineDocumentFlowTest {
                 assertEquals("Текст 1\n", focused.text.toString())
                 assertEquals(focused.text.length, focused.selectionStart)
             }
-            compose.onNodeWithTag("remove-media-$imageA").performScrollTo().performClick()
+            compose.onNodeWithTag("inline-image-$imageA").performScrollTo().performTouchInput { longClick() }
+            compose.onNodeWithTag("remove-media-$imageA").performClick()
             compose.onNodeWithTag("editor-save").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithTag("note-slider").fetchSemanticsNodes().isNotEmpty() }
             val deleted = db.cardDao().findById(saved.id)!!

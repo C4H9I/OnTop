@@ -7,6 +7,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import com.ontop.app.ui.theme.OnTopTheme
 
 class MainActivity : ComponentActivity() {
@@ -28,6 +30,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         com.ontop.app.reminders.ReminderRestoreJob.enqueue(this)
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) { com.ontop.app.widget.WidgetRotation.reconcile(this@MainActivity) }
         requestedCard.value = (savedInstanceState?.getLong("pending_widget_card")
             ?: intent.getLongExtra(EXTRA_CARD_ID, 0)).takeIf { it > 0 }
         val viewModel = ViewModelProvider(this)[BoardViewModel::class.java]

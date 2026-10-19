@@ -15,7 +15,7 @@ import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
 internal data class BackupData(val cards: List<CardEntity>, val comments: List<CardCommentEntity>,
-    val reminders: List<ReminderEntity>) {
+    val reminders: List<ReminderEntity>, val tags: List<TagEntity> = emptyList(), val cardTags: List<CardTagCrossRef> = emptyList()) {
     fun paths(): Set<String> = cards.flatMap { card ->
         listOfNotNull(card.imagePath) + RichTextCodec.decode(card.description, card.formatting).imagePaths()
     }.toSet()
@@ -27,7 +27,7 @@ internal data class BackupLimits(val archive: Long = 512L * 1024 * 1024,
 
 /** A logical export, independent of SQLite schema/version and Android filesystem locations. */
 internal object BackupFormat {
-    const val VERSION = 1
+    const val VERSION = 2
     private val imageName = Regex("images/[a-f0-9-]{1,64}\\.jpg")
     fun validPath(path: String): Boolean = imageName.matches(path)
     private fun JSONObject.required(name: String): Any { require(has(name)); return get(name) }
@@ -99,10 +99,10 @@ internal object BackupFormat {
         return RichDocument(text, ranges, media).normalized()
     }
 
-    fun encode(data: BackupData): ByteArray = JSONObject().put("cards", JSONArray().apply {
+    fun encode(data: BackupData, includeTags: Boolean = true): ByteArray = JSONObject().put("cards", JSONArray().apply {
         data.cards.sortedBy { it.id }.forEach { c -> put(JSONObject().put("id", c.id).put("title", c.title)
             .put("description", c.description).put("size", c.size.name).put("createdAt", c.createdAt)
-            .put("updatedAt", c.updatedAt).put("sortOrder", c.sortOrder)
+            .put("updatedAt", c.updatedAt).put("sortOrder", c.sortOrder).put("importance", c.importance)
             .nullable("imagePath", c.imagePath).nullable("formatting", c.formatting)) }
     }).put("comments", JSONArray().apply {
         data.comments.sortedBy { it.id }.forEach { c -> put(JSONObject().put("id", c.id).put("cardId", c.cardId)
@@ -114,14 +114,26 @@ internal object BackupFormat {
             .nullable("snoozeAt", r.snoozeAt).put("mode", r.mode).put("daysMask", r.daysMask).put("times", r.times)
             .put("intervalHours", r.intervalHours).put("windowStart", r.windowStart).put("windowEnd", r.windowEnd)
             .nullable("quietStart", r.quietStart).nullable("quietEnd", r.quietEnd).nullable("pausedUntil", r.pausedUntil)) }
-    }).toString().toByteArray(Charsets.UTF_8)
+    }).apply {
+        if (includeTags) {
+            put("tags", JSONArray().apply { data.tags.sortedBy { it.id }.forEach {
+                put(JSONObject().put("id", it.id).put("name", it.name).put("createdAt", it.createdAt))
+            } })
+            put("cardTags", JSONArray().apply { data.cardTags.sortedWith(compareBy<CardTagCrossRef> { it.cardId }.thenBy { it.tagId }).forEach {
+                put(JSONObject().put("cardId", it.cardId).put("tagId", it.tagId))
+            } })
+        }
+    }.toString().toByteArray(Charsets.UTF_8)
 
-    fun decode(bytes: ByteArray): BackupData {
+    fun decode(bytes: ByteArray, requireTags: Boolean = false): BackupData {
         val root = objectFrom(bytes.toString(Charsets.UTF_8))
+        require(root.has("tags") == root.has("cardTags"))
+        if (requireTags) require(root.has("tags"))
         val cards = root.list("cards", 10_000).map { c ->
             CardEntity(c.id("id"), c.string("title", 10_000).also { require(it.isNotBlank()) }, c.string("description"),
                 CardSize.valueOf(c.string("size", 20)), c.time("createdAt"), c.time("updatedAt"), c.number("sortOrder"),
-                c.nullString("imagePath", 100)?.also { require(validPath(it)) }, c.nullString("formatting"))
+                c.nullString("imagePath", 100)?.also { require(validPath(it)) }, c.nullString("formatting"),
+                if (c.has("importance")) c.int("importance").also { require(it in 0..100) } else 50)
                 .also { document(it.description, it.formatting) }
         }
         val comments = root.list("comments", 100_000).map { c ->
@@ -139,12 +151,22 @@ internal object BackupFormat {
         require(ids.size == cards.size && comments.map { it.id }.distinct().size == comments.size)
         require(reminders.map { it.id }.distinct().size == reminders.size && reminders.map { it.cardId }.distinct().size == reminders.size)
         require(comments.all { it.cardId in ids } && reminders.all { it.cardId in ids })
-        return BackupData(cards, comments, reminders)
+        val tags = if (root.has("tags")) root.list("tags", 10_000).map {
+            val name = cleanTagName(it.string("name", 1000))
+            TagEntity(it.id("id"), name, tagNameKey(name), it.time("createdAt"))
+        } else emptyList()
+        val links = if (root.has("cardTags")) root.list("cardTags", 100_000).map {
+            CardTagCrossRef(it.id("cardId"), it.id("tagId"))
+        } else emptyList()
+        val tagIds = tags.map { it.id }.toSet()
+        require(tagIds.size == tags.size && tags.map { it.normalizedName }.toSet().size == tags.size)
+        require(links.toSet().size == links.size && links.all { it.cardId in ids && it.tagId in tagIds })
+        return BackupData(cards, comments, reminders, tags, links)
     }
 
     fun digest(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-    fun fingerprint(data: BackupData): String = digest(encode(data.copy(
-        reminders = data.reminders.map { it.copy(nextAt = null, snoozeAt = null) })))
+    fun fingerprint(data: BackupData, includeTags: Boolean = true): String = digest(encode(data.copy(
+        reminders = data.reminders.map { it.copy(nextAt = null, snoozeAt = null) }), includeTags))
 
     /** Enforce limits against actual bytes read; ZIP metadata is untrusted. */
     fun copy(input: InputStream, output: OutputStream, limit: Long): Long {
@@ -221,7 +243,8 @@ internal object BackupFormat {
         require("manifest.json" in extracted && "data.json" in extracted)
         val manifest = objectFrom(File(target, "manifest.json").readText(Charsets.UTF_8))
         require(manifest.string("format", 20) == "OnTop")
-        require(manifest.int("version") == VERSION) { "Версия резервной копии не поддерживается." }
+        val archiveVersion = manifest.int("version")
+        require(archiveVersion in 1..VERSION) { "Версия резервной копии не поддерживается." }
         manifest.time("createdAt")
         val inventory = manifest.list("files", limits.entries)
         val names = inventory.map { it.string("path", 100) }
@@ -231,7 +254,7 @@ internal object BackupFormat {
             val hash = file.string("sha256", 64); require(Regex("[a-f0-9]{64}").matches(hash))
             require(actual.first == file.number("bytes") && actual.second == hash) { "Контрольная сумма не совпадает." }
         }
-        val data = decode(File(target, "data.json").readBytes())
+        val data = decode(File(target, "data.json").readBytes(), requireTags = archiveVersion >= 2)
         require(data.paths() == extracted.keys - setOf("manifest.json", "data.json")) { "В архиве отсутствуют изображения или есть лишние файлы." }
         data.paths().forEach { path -> checkImage(File(target, path)) }
         return data

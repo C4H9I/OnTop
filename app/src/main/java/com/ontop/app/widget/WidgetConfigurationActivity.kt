@@ -55,12 +55,19 @@ class WidgetConfigurationActivity : ComponentActivity() {
                 var saving by remember { mutableStateOf(false) }
                 var error by remember { mutableStateOf<String?>(null) }
                 var retry by remember { mutableIntStateOf(0) }
-                var selectedId by remember { mutableStateOf<Long?>(null) }
+                var selectedId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
+                var mode by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(WidgetMode.FIXED) }
+                var initialized by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
                 LaunchedEffect(retry) {
                     loading = true
                     error = null
                     try {
-                        selectedId = WidgetSelectionStore(this@WidgetConfigurationActivity).get(widgetId)
+                        if (!initialized) {
+                            val selection = WidgetSelectionStore(this@WidgetConfigurationActivity).selection(widgetId)
+                            selectedId = selection.cardId
+                            mode = selection.mode
+                            initialized = true
+                        }
                         val dao = withContext(Dispatchers.IO) { OnTopDatabase.getInstance(this@WidgetConfigurationActivity).cardDao() }
                         dao.observeCards().collect { cards = it; loading = false }
                     } catch (e: CancellationException) { throw e
@@ -69,11 +76,25 @@ class WidgetConfigurationActivity : ComponentActivity() {
                 Surface(Modifier.fillMaxSize()) {
                     Column(Modifier.safeDrawingPadding().padding(20.dp)) {
                         Text("Карточка для виджета OnTop", style = MaterialTheme.typography.headlineSmall)
+                        WidgetModeChoices(mode, !saving) { mode = it }
+                        if (mode == WidgetMode.ROTATION) {
+                            Text("Заметки меняются примерно каждые 30 минут. Более важные появляются чаще")
+                            Button(enabled = !saving && !loading, onClick = {
+                                saving = true
+                                lifecycleScope.launch {
+                                    try {
+                                        WidgetRotation.configure(this@WidgetConfigurationActivity, widgetId, WidgetMode.ROTATION)
+                                        setResult(RESULT_OK, result); finish()
+                                    } catch (e: CancellationException) { throw e
+                                    } catch (_: Exception) { error = "Не удалось настроить виджет. Повторите попытку."; saving = false }
+                                }
+                            }) { Text("Включить ротацию") }
+                        }
                         if (loading) Text("Загрузка…")
-                        if (!loading && error == null && cards.isEmpty()) Text("Сначала создайте карточку в OnTop, затем добавьте виджет.")
+                        if (mode == WidgetMode.FIXED && !loading && error == null && cards.isEmpty()) Text("Сначала создайте карточку в OnTop, затем добавьте виджет.")
                         error?.let { Text(it); TextButton(onClick = { retry++ }, enabled = !saving) { Text("Повторить") } }
                         LazyColumn(Modifier.weight(1f)) {
-                            items(cards, key = { it.id }) { card ->
+                            items(if (mode == WidgetMode.FIXED) cards else emptyList(), key = { it.id }) { card ->
                                 WidgetCardChoice(card, selectedId == card.id, enabled = !saving, onClick = {
                                     if (saving) return@WidgetCardChoice
                                     saving = true
@@ -83,9 +104,8 @@ class WidgetConfigurationActivity : ComponentActivity() {
                                                 OnTopDatabase.getInstance(this@WidgetConfigurationActivity).cardDao().findById(card.id) != null
                                             }
                                             check(exists)
-                                            WidgetSelectionStore(this@WidgetConfigurationActivity).set(widgetId, card.id)
+                                            WidgetRotation.configure(this@WidgetConfigurationActivity, widgetId, WidgetMode.FIXED, card.id)
                                             selectedId = card.id
-                                            updateCardWidget(this@WidgetConfigurationActivity, widgetId)
                                             setResult(RESULT_OK, result)
                                             finish()
                                         } catch (e: CancellationException) { throw e
@@ -98,6 +118,17 @@ class WidgetConfigurationActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+internal fun WidgetModeChoices(mode: WidgetMode, enabled: Boolean, onMode: (WidgetMode) -> Unit) {
+    listOf(WidgetMode.FIXED to "Одна заметка", WidgetMode.ROTATION to "Случайная ротация").forEach { (value, title) ->
+        Row(Modifier.fillMaxWidth().selectable(mode == value, enabled = enabled, role = Role.RadioButton,
+            onClick = { onMode(value) }), verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = mode == value, onClick = null, enabled = enabled)
+            Text(title)
         }
     }
 }
@@ -118,7 +149,7 @@ internal fun WidgetCardChoice(card: CardEntity, selected: Boolean, enabled: Bool
     ) {
         Box(Modifier.size(72.dp).clip(RoundedCornerShape(12.dp)).background(cardBackground(card.id))
             .testTag("widget-thumbnail-${card.id}")) {
-            card.imagePath?.let { path ->
+            card.widgetCoverPath()?.let { path ->
                 LocalCardImage(path, Modifier.fillMaxSize(), maxSide = 256, showError = false)
             }
         }
