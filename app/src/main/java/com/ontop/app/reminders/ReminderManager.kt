@@ -76,7 +76,8 @@ internal class ReminderManager(
     }
 
     /** Lock before the Room transaction, just like receivers: no inverted lock order. */
-    suspend fun saveNote(card: CardEntity, isNew: Boolean, reminder: ReminderDraft?, reminderChanged: Boolean): Long =
+    suspend fun saveNote(card: CardEntity, isNew: Boolean, reminder: ReminderDraft?, reminderChanged: Boolean,
+        tagIds: List<Long>? = null, newTagNames: List<String> = emptyList()): Long =
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 val previous = if (isNew) null else dao.forCard(card.id)
@@ -87,6 +88,7 @@ internal class ReminderManager(
                             check(db.cardDao().update(card) == 1)
                             card.id
                         }
+                        if (tagIds != null) db.tagDao().replaceForCard(id, tagIds, newTagNames)
                         if (reminderChanged && reminder != null) {
                             planned = storeRule(id, reminder)
                             delivery.cancel(planned!!.id)

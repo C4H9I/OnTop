@@ -74,6 +74,65 @@ class CardWidgetLayoutTest(private val width: Int, private val height: Int, priv
         (root as ViewGroup).offsetDescendantRectToMyCoords(child, it)
     }
 
+    @Test fun lightDarkAndDetailedImagesStayClearInBothModesWithoutMutatingBitmap() = runBlocking<Unit> {
+        for (sample in listOf("light", "dark", "detail")) {
+            val image = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+            for (y in 0 until 256) for (x in 0 until 256) {
+                image.setPixel(x, y, when (sample) {
+                    "light" -> Color.rgb(240, 232, 216)
+                    "dark" -> Color.rgb(48, 64, 56)
+                    else -> if ((x / 8 + y / 8) % 2 == 0) Color.rgb(224, 184, 112) else Color.rgb(64, 128, 160)
+                })
+            }
+            val original = image.copy(Bitmap.Config.ARGB_8888, false)
+            try {
+                for (mode in WidgetMode.entries) render(WidgetContent(5, "Важная мысль", image, false, mode)) { root, views ->
+                    val photo = views.filterIsInstance<ImageView>().single { it.drawable is BitmapDrawable }
+                    assertNull(photo.colorFilter)
+                    assertEquals(1f, photo.alpha, 0f)
+                    val expected = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+                    val actual = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+                    try {
+                        photo.draw(Canvas(expected))
+                        root.draw(Canvas(actual))
+                        val px = root.width / 2
+                        val top = (root.height * .30f).toInt()
+                        assertEquals("$sample $mode: original upper pixels", expected.getPixel(px, top), actual.getPixel(px, top))
+                        val bottom = (root.height * .97f).toInt()
+                        val source = Color.red(expected.getPixel(px, bottom))
+                        val shaded = Color.red(actual.getPixel(px, bottom))
+                        assertEquals("$sample $mode: one lower scrim", source * .38f, shaded.toFloat(), 3f)
+                        assertEquals(Color.WHITE, views.filterIsInstance<TextView>().single { it.text.toString() == "Важная мысль" }.currentTextColor)
+                        if (InstrumentationRegistry.getArguments().getString("captureWidgetBrightness") == "true") {
+                            val directory = File(instrumentation.targetContext.cacheDir, "widget-brightness").apply { mkdirs() }
+                            File(directory, "$sample-${mode.name}-${width}x${height}-${fontScale}.png").outputStream().use {
+                                actual.compress(Bitmap.CompressFormat.PNG, 100, it)
+                            }
+                        }
+                    } finally { expected.recycle(); actual.recycle() }
+                }
+                assertTrue("Rendering must not alter source pixels", original.sameAs(image))
+            } finally { original.recycle(); image.recycle() }
+        }
+    }
+
+    @Test fun rotationButtonHasSeparateClickTargetWithoutCoveringTitleOrSettings() = runBlocking<Unit> {
+        render(WidgetContent(5, "Ротация", null, false, WidgetMode.ROTATION)) { root, views ->
+            fun action(label: String) = generateSequence(views.single { it.contentDescription?.toString() == label })
+                { it.parent as? View }.first { it.hasOnClickListeners() }
+            val next = action("Следующая заметка")
+            val settings = action("Сменить карточку")
+            val nextBounds = bounds(root, next)
+            val settingsBounds = bounds(root, settings)
+            assertFalse(Rect.intersects(nextBounds, settingsBounds))
+            assertTrue(nextBounds.left >= 0 && nextBounds.top >= 0)
+            assertTrue(nextBounds.right <= root.width)
+            val title = views.filterIsInstance<TextView>().single { it.text.toString() == "Ротация" }
+            assertTrue(nextBounds.bottom <= bounds(root, title).top)
+            assertTrue(views.count { it.hasOnClickListeners() } >= 3)
+        }
+    }
+
     @Test fun photoFillsWidgetGradientProtectsTextAndActionsAreSeparate() = runBlocking<Unit> {
         val image = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) }
         val density = context.resources.displayMetrics.density
@@ -83,6 +142,7 @@ class CardWidgetLayoutTest(private val width: Int, private val height: Int, priv
         try {
             render(WidgetContent(5, phrase, image, false)) { root, views ->
                 val title = views.filterIsInstance<TextView>().single { it.text.toString() == phrase }
+                assertTrue("Bright photo text retains a local glyph shadow", title.shadowRadius > 0f)
                 val textBounds = bounds(root, title)
                 assertTrue(textBounds.bottom <= root.height)
                 assertTrue(textBounds.top >= root.height * 0.35)
@@ -95,12 +155,15 @@ class CardWidgetLayoutTest(private val width: Int, private val height: Int, priv
                 val action = generateSequence(icon) { it.parent as? View }.first { it.hasOnClickListeners() }
                 val actionBounds = bounds(root, action)
                 assertTrue(actionBounds.right <= root.width && actionBounds.top >= 0)
-                assertTrue(actionBounds.bottom <= textBounds.top)
+                val firstLineTop = textBounds.top + title.totalPaddingTop
+                assertTrue("Toolbar $actionBounds overlaps text glyph area at $firstLineTop",
+                    actionBounds.bottom <= firstLineTop)
                 assertTrue(views.count { it.hasOnClickListeners() } >= 2)
                 assertFalse(views.filterIsInstance<TextView>().any { "Сменить карточку" in it.text.toString() })
                 root.draw(Canvas(screenshot))
                 val upper = screenshot.getPixel((root.width * 0.05).toInt(), (root.height * 0.1).toInt())
                 val lower = screenshot.getPixel((root.width * 0.05).toInt(), (root.height * 0.65).toInt())
+                assertEquals(255, Color.red(upper))
                 assertTrue(Color.red(upper) > Color.red(lower) + 60)
                 InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")?.let { output ->
                     val file = File(output, "design-review/widget-${width}x${height}-${fontScale}x.png")
@@ -110,8 +173,9 @@ class CardWidgetLayoutTest(private val width: Int, private val height: Int, priv
             }
             val shade = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
             context.getDrawable(R.drawable.widget_photo_shade)!!.apply { setBounds(0, 0, 100, 100); draw(Canvas(shade)) }
-            assertTrue(Color.alpha(shade.getPixel(50, 0)) < 30)
-            assertTrue(Color.alpha(shade.getPixel(50, 40)) >= 200)
+            for (y in 0..39) assertEquals("Unshaded upper photo, y=$y", 0, Color.alpha(shade.getPixel(50, y)))
+            assertTrue(Color.alpha(shade.getPixel(50, 65)) in 60..80)
+            assertTrue(Color.alpha(shade.getPixel(50, 99)) in 160..178)
             shade.recycle()
         } finally { screenshot.recycle(); image.recycle() }
     }

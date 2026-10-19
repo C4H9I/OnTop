@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_photo_title"
+    style="@style/Glance.AppWidget.Text"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="bottom|start"
+    android:ellipsize="end"
+    android:includeFontPadding="true"
+    android:textDirection="locale"
+    android:textColor="#FFFFFFFF"
+    android:shadowColor="#CC000000"
+    android:shadowDx="0"
+    android:shadowDy="1"
+    android:shadowRadius="2" />

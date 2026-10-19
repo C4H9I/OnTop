@@ -70,10 +70,14 @@ class BackupTest {
                 daysMask = 21, times = "540,1080", quietStart = 1380, quietEnd = 420, pausedUntil = System.currentTimeMillis() + 86400000),
                 ReminderEntity(21, 2, 20, 0, false, 100, 200, mode = "INTERVAL", intervalHours = 3, windowStart = 1200, windowEnd = 300))
             cards.forEach { db.cardDao().insert(it) }; comments.forEach { db.cardCommentDao().insert(it) }; rules.forEach { db.reminderDao().insert(it) }
-            return BackupData(cards, comments, rules)
+            val tags = listOf(TagEntity(1, "Работа", createdAt = 100), TagEntity(2, "Личные мысли", createdAt = 101))
+            val links = listOf(CardTagCrossRef(1, 1), CardTagCrossRef(1, 2), CardTagCrossRef(2, 2))
+            tags.forEach { db.tagDao().insert(it) }; links.forEach { db.tagDao().insertLink(it) }
+            return BackupData(cards, comments, rules, tags, links)
         }
         suspend fun old(): BackupData {
             db.cardDao().deleteAll()
+            db.tagDao().deleteAll()
             val old = CardEntity(99, "Прежняя заметка", "Не терять", createdAt = 1, updatedAt = 1, sortOrder = 0, imagePath = image())
             db.cardDao().insert(old)
             db.reminderDao().insert(ReminderEntity(99, 99, 12, 30, true, 1, 1, nextAt = System.currentTimeMillis() + 60_000))
@@ -106,6 +110,8 @@ class BackupTest {
             assertNull(manager.state.value.error)
             val restored = manager.snapshot()
             assertEquals(source.comments, restored.comments)
+            assertEquals(source.tags, restored.tags)
+            assertEquals(source.cardTags, restored.cardTags)
             source.cards.forEach { original ->
                 val card = restored.cards.single { it.id == original.id }
                 assertEquals(original, card.copy(imagePath = original.imagePath, formatting = original.formatting))

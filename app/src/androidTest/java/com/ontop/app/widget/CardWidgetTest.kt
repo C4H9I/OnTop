@@ -43,6 +43,20 @@ class CardWidgetTest {
             val blue = widget.load(context, 1, db, store).image!!
             assertTrue(android.graphics.Color.blue(blue.getPixel(0, 0)) > 200)
             blue.recycle()
+            val document = com.ontop.app.text.RichDocument("", media = listOf(
+                com.ontop.app.text.NoteMedia("inline", 0, com.ontop.app.text.MediaKind.IMAGE, path = first)))
+            val card = db.cardDao().findById(id)!!.copy(formatting = com.ontop.app.text.RichTextCodec.encode(document))
+            db.cardDao().update(card)
+            assertEquals(second, card.widgetCoverPath())
+            db.cardDao().update(card.copy(imagePath = null))
+            val fallback = widget.load(context, 1, db, store).image!!
+            assertTrue(android.graphics.Color.red(fallback.getPixel(0, 0)) > 200)
+            fallback.recycle()
+            store.save(1, WidgetSelection(WidgetMode.ROTATION, currentId = id))
+            val rotation = widget.load(context, 1, db, store)
+            assertEquals(WidgetMode.ROTATION, rotation.mode)
+            assertTrue(android.graphics.Color.red(rotation.image!!.getPixel(0, 0)) > 200)
+            rotation.image.recycle()
         } finally {
             db.close(); store.remove(1); paths.forEach { images.delete(it) }; source.delete()
         }

@@ -68,19 +68,23 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
     var editing by rememberSaveable { mutableStateOf(false) }
     var sliderOpen by rememberSaveable { mutableStateOf(false) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var tagsOpen by rememberSaveable { mutableStateOf(false) }
     val backupState by viewModel.backup.state.collectAsState()
     val backupActive by BackupManager.active.collectAsState()
     val revision by viewModel.backup.revision.collectAsState()
     var seenRevision by rememberSaveable { mutableStateOf(revision) }
     LaunchedEffect(revision) {
         if (seenRevision != revision) {
-            editorOpen = false; editing = false; selectedId = null; sliderOpen = false
+            editorOpen = false; editing = false; selectedId = null; sliderOpen = false; tagsOpen = false
             viewModel.sliderSession.currentId = null; viewModel.sliderSession.index = 0
             seenRevision = revision
         }
     }
     val gridState = rememberLazyStaggeredGridState()
     val selected = state.cards.firstOrNull { it.id == selectedId }
+    val filteredCards = remember(state.cards, state.cardTags, state.selectedTagId) {
+        filterCardsByTag(state.cards, state.cardTags, state.selectedTagId)
+    }
 
     // A widget launch waits for the user to save or discard the active draft.
     LaunchedEffect(requestedCardId, state.loading, state.cards, state.saving, editing, backupActive) {
@@ -119,9 +123,13 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
         editing = false
         editorOpen = true
         viewModel.clearError()
-    }, onView = { viewModel.sliderSession.enter(state.cards); sliderOpen = true }, onSettings = { settingsOpen = true })
+    }, onView = { viewModel.sliderSession.enter(filteredCards); sliderOpen = true }, onSettings = { settingsOpen = true },
+        onSort = viewModel::setBoardSort, onSelectTag = viewModel::selectTag, onManageTags = { viewModel.clearError(); tagsOpen = true })
 
-    if (sliderOpen && !editorOpen) NoteSliderScreen(state.cards, viewModel.sliderSession,
+    if (tagsOpen) TagManagementDialog(state, viewModel::createTag, viewModel::renameTag, viewModel::deleteTag,
+        onClose = { tagsOpen = false; viewModel.clearError() })
+
+    if (sliderOpen && !editorOpen) NoteSliderScreen(filteredCards, viewModel.sliderSession,
         onClose = { sliderOpen = false },
         onEdit = { selectedId = it.id; editing = true; editorOpen = true; viewModel.clearError() },
         onDetails = { selectedId = it.id; editing = false; editorOpen = true; viewModel.clearError() })
@@ -147,7 +155,18 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
 @Composable
 internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEntity) -> Unit,
     gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(), onView: () -> Unit = {},
-    onSettings: () -> Unit = {}) {
+    onSettings: () -> Unit = {}, onSort: (BoardSort) -> Unit = {},
+    onSelectTag: (Long?) -> Unit = {}, onManageTags: () -> Unit = {}) {
+    val displayedCards = remember(state.cards, state.sortMode, state.cardTags, state.selectedTagId) {
+        sortedBoardCards(filterCardsByTag(state.cards, state.cardTags, state.selectedTagId), state.sortMode)
+    }
+    var previousSort by remember { mutableStateOf(state.sortMode) }
+    var previousTag by remember { mutableStateOf(state.selectedTagId) }
+    LaunchedEffect(state.sortMode, state.selectedTagId) {
+        if (previousSort != state.sortMode || previousTag != state.selectedTagId) gridState.scrollToItem(0)
+        previousSort = state.sortMode
+        previousTag = state.selectedTagId
+    }
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         floatingActionButton = {
@@ -161,15 +180,20 @@ internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnt
         }
     ) { innerPadding ->
         Column(Modifier.fillMaxSize().padding(innerPadding).consumeWindowInsets(innerPadding)) {
-            BoardHeader(onSettings)
+            BoardHeader(onSettings, state.sortMode, onSort, !state.loading)
             TextButton(onClick = onView, enabled = !state.loading,
                 modifier = Modifier.padding(horizontal = 12.dp)) { Text("Просмотр →") }
+            TopicFilter(state, onSelectTag, onManageTags)
             if (state.error != null) {
                 Text(state.error, color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(horizontal = 20.dp))
             }
             when {
                 state.loading -> Text("Загружаем карточки…", Modifier.padding(20.dp))
+                displayedCards.isEmpty() && state.selectedTagId != null -> Column(Modifier.padding(20.dp)) {
+                    Text("В теме «${state.tags.firstOrNull { it.id == state.selectedTagId }?.name.orEmpty()}» пока нет заметок")
+                    TextButton(onClick = { onSelectTag(null) }) { Text("Показать все заметки") }
+                }
                 state.cards.isEmpty() -> Column(Modifier.padding(20.dp)) {
                     Text("Здесь появятся ваши мысли", style = MaterialTheme.typography.titleLarge)
                     Text("Создайте первую карточку с тем, что важно помнить.",
@@ -187,7 +211,7 @@ internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnt
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalItemSpacing = 8.dp
                     ) {
-                        items(state.cards, key = { it.id }, span = {
+                        items(displayedCards, key = { it.id }, span = {
                             if (it.size == CardSize.WIDE) StaggeredGridItemSpan.FullLine else StaggeredGridItemSpan.SingleLane
                         }) { card -> ThoughtTile(card, onClick = { onOpen(card) }) }
                     }

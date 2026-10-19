@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Keep the upper 40% clear; only the lower photo fades to 65% black.
+         This is the sole photo scrim. Never bake it into the source bitmap. -->
     <gradient android:angle="270" android:startColor="#00000000"
-        android:centerColor="#D9000000" android:centerY="0.35" android:endColor="#EB000000" />
+        android:centerColor="#00000000" android:centerY="0.40" android:endColor="#A6000000" />
 </shape>

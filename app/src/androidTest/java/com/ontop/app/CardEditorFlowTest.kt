@@ -40,6 +40,9 @@ class CardEditorFlowTest {
             if (compose.onAllNodesWithTag("editor-settings-compact").fetchSemanticsNodes().isNotEmpty()) {
                 compose.onNodeWithTag("editor-settings-compact").performClick()
             }
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithText("Отображение").fetchSemanticsNodes().size == 1
+            }
             compose.onNodeWithText("Отображение").performClick()
         }
         fun done() { compose.onNodeWithText("Готово").performClick() }
