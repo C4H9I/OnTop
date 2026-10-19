@@ -14,5 +14,6 @@ data class CardEntity(
     val createdAt: Long,
     val updatedAt: Long,
     val sortOrder: Long,
-    val imagePath: String? = null
+    val imagePath: String? = null,
+    val formatting: String? = null
 )

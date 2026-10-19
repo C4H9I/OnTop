@@ -7,12 +7,37 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [CardEntity::class, CardCommentEntity::class], version = 3, exportSchema = true)
+@Database(entities = [CardEntity::class, CardCommentEntity::class, ReminderEntity::class], version = 6, exportSchema = true)
 abstract class OnTopDatabase : RoomDatabase() {
     abstract fun cardDao(): CardDao
     abstract fun cardCommentDao(): CardCommentDao
+    abstract fun reminderDao(): ReminderDao
 
     companion object {
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cards ADD COLUMN formatting TEXT")
+            }
+        }
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE reminders ADD COLUMN mode TEXT NOT NULL DEFAULT 'TIMES'")
+                db.execSQL("ALTER TABLE reminders ADD COLUMN daysMask INTEGER NOT NULL DEFAULT 127")
+                db.execSQL("ALTER TABLE reminders ADD COLUMN times TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE reminders ADD COLUMN intervalHours INTEGER NOT NULL DEFAULT 3")
+                db.execSQL("ALTER TABLE reminders ADD COLUMN windowStart INTEGER NOT NULL DEFAULT 540")
+                db.execSQL("ALTER TABLE reminders ADD COLUMN windowEnd INTEGER NOT NULL DEFAULT 1260")
+                db.execSQL("ALTER TABLE reminders ADD COLUMN quietStart INTEGER")
+                db.execSQL("ALTER TABLE reminders ADD COLUMN quietEnd INTEGER")
+                db.execSQL("ALTER TABLE reminders ADD COLUMN pausedUntil INTEGER")
+            }
+        }
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `reminders` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `cardId` INTEGER NOT NULL, `hour` INTEGER NOT NULL, `minute` INTEGER NOT NULL, `enabled` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `nextAt` INTEGER, `snoozeAt` INTEGER, FOREIGN KEY(`cardId`) REFERENCES `cards`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_reminders_cardId` ON `reminders` (`cardId`)")
+            }
+        }
         val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `cards` ADD COLUMN `imagePath` TEXT")
@@ -31,7 +56,7 @@ abstract class OnTopDatabase : RoomDatabase() {
                 context.applicationContext,
                 OnTopDatabase::class.java,
                 "ontop.db"
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build().also { instance = it }
         }
     }
 }

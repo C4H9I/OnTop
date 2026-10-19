@@ -25,7 +25,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.flowWithLifecycle
 import com.ontop.app.data.CardEntity
 import com.ontop.app.data.CardCommentEntity
+import com.ontop.app.data.ReminderEntity
+import com.ontop.app.reminders.summary
+import com.ontop.app.text.RichTextCodec
+import com.ontop.app.text.annotated
+import com.ontop.app.text.MultimediaNoteView
 import java.time.Instant
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -41,6 +47,31 @@ internal fun CardDetailsDialog(
     onDismiss: () -> Unit,
     onEdit: () -> Unit
 ) {
+    var reminderOpen by rememberSaveable(card.id) { mutableStateOf(false) }
+    var reminderLoaded by remember(card.id) { mutableStateOf(false) }
+    var reminderError by remember(card.id) { mutableStateOf(false) }
+    val reminderFlow = remember(card.id, viewModel, lifecycle) {
+        viewModel.observeReminder(card.id).catch { reminderError = true }.flowWithLifecycle(lifecycle)
+    }
+    val reminder by produceState<ReminderEntity?>(null, card.id, reminderFlow) {
+        value = null
+        reminderFlow.collect { value = it; reminderLoaded = true }
+    }
+    val currentReminder = reminder?.takeIf { it.cardId == card.id }
+    var summaryNow by remember(card.id) { mutableStateOf(Instant.now()) }
+    LaunchedEffect(currentReminder?.pausedUntil) {
+        summaryNow = Instant.now()
+        currentReminder?.pausedUntil?.let { until ->
+            val remaining = until - System.currentTimeMillis()
+            if (remaining > 0) { kotlinx.coroutines.delay(remaining); summaryNow = Instant.now() }
+        }
+    }
+    val reminderStatus = when {
+        reminderError -> "Не удалось загрузить напоминание"
+        !reminderLoaded -> "Загрузка напоминания…"
+        currentReminder != null -> currentReminder!!.summary(summaryNow)
+        else -> "Напоминание выключено"
+    }
     var loadError by remember(card.id) { mutableStateOf(false) }
     var loaded by remember(card.id) { mutableStateOf(false) }
     val flow = remember(card.id, viewModel, lifecycle) {
@@ -67,8 +98,12 @@ internal fun CardDetailsDialog(
         key(card.id) {
             CardDetailsContent(card, comments, loaded, loadError, state.saving, state.error,
                 onAddComment = { text, success -> viewModel.addComment(card.id, text, success) },
-                onDeleteComment = viewModel::deleteComment, onDismiss = onDismiss, onEdit = onEdit)
+                onDeleteComment = viewModel::deleteComment, onDismiss = onDismiss, onEdit = onEdit,
+                onReminder = { reminderOpen = true }, reminderStatus = reminderStatus)
         }
+    }
+    if (reminderOpen) key(card.id) {
+        ReminderSettingsDialog(card.id, viewModel) { reminderOpen = false }
     }
 }
 
@@ -84,7 +119,9 @@ internal fun CardDetailsContent(
     onDeleteComment: (Long, () -> Unit) -> Unit,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onReminder: (() -> Unit)? = null,
+    reminderStatus: String = "Напоминание выключено"
 ) {
     var draft by rememberSaveable(card.id) { mutableStateOf("") }
     var deletingId by rememberSaveable(card.id) { mutableStateOf<Long?>(null) }
@@ -132,6 +169,11 @@ internal fun CardDetailsContent(
                 TextButton(onClick = onEdit, enabled = !saving, modifier = Modifier.weight(1f)) {
                     Text("Редактировать")
                 }
+                if (onReminder != null) IconButton(onClick = onReminder, enabled = !saving,
+                    modifier = Modifier.testTag("reminder-settings")) {
+                    Icon(painterResource(R.drawable.ic_bell), contentDescription = "Настроить напоминание",
+                        tint = MaterialTheme.colorScheme.primary)
+                }
             }
             LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("reflection-list"), state = list,
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp)) {
@@ -140,9 +182,18 @@ internal fun CardDetailsContent(
                         CardVisual(card, modifier = Modifier.testTag("details-hero"),
                             minHeight = if (card.imagePath != null) 280.dp else 200.dp,
                             titleStyle = MaterialTheme.typography.headlineSmall, maxImageSide = 1600)
-                        if (card.description.isNotBlank()) {
-                            Text(card.description, style = MaterialTheme.typography.bodyLarge,
+                        val document = RichTextCodec.decode(card.description, card.formatting)
+                        if (document.media.isNotEmpty()) MultimediaNoteView(document)
+                        else if (card.description.isNotBlank()) {
+                            Text(RichTextCodec.decode(card.description, card.formatting).annotated(MaterialTheme.typography.bodyLarge.fontSize,
+                                MaterialTheme.colorScheme.background.luminance() < 0.5f), style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier.padding(top = 24.dp, bottom = 8.dp).testTag("card-description"))
+                        }
+                        if (onReminder != null) TextButton(onClick = onReminder, enabled = !saving,
+                            modifier = Modifier.fillMaxWidth().testTag("reminder-status"),
+                            contentPadding = PaddingValues(vertical = 8.dp)) {
+                            Text(reminderStatus, modifier = Modifier.fillMaxWidth(),
+                                style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                 }

@@ -31,6 +31,14 @@ import java.io.File
 class CardEditorDesignTest(private val width: Int, private val fontScale: Float) {
     @get:Rule val compose = createComposeRule()
     private lateinit var back: OnBackPressedDispatcher
+    private fun settings() {
+        if (compose.onAllNodesWithTag("editor-settings-compact").fetchSemanticsNodes().isNotEmpty()) {
+            compose.onNodeWithTag("editor-settings-compact").performClick()
+        }
+    }
+    private fun display() { settings(); compose.onNodeWithText("Отображение").performClick() }
+    private fun done() { compose.onNodeWithText("Готово").performClick() }
+    private fun other() { settings(); compose.onNodeWithText("Другие настройки").performClick() }
 
     companion object {
         @JvmStatic @Parameterized.Parameters(name = "width={0}dp fontScale={1}")
@@ -65,6 +73,13 @@ class CardEditorDesignTest(private val width: Int, private val fontScale: Float)
         compose.onNodeWithTag("editor-title").performTextReplacement("Важная мысль")
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithTag("editor-title").assertTextContains("Важная мысль")
+        InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")?.let { output ->
+            val file = File(output, "design-review/note-editor-${width}dp-${fontScale}x.png")
+            file.parentFile!!.mkdirs()
+            val bitmap = compose.onNodeWithTag("card-editor").captureToImage().asAndroidBitmap()
+            file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
+        }
         compose.runOnIdle { back.onBackPressed() }
         compose.onNodeWithText("Отменить изменения?").assertIsDisplayed()
         compose.onNodeWithText("Продолжить редактирование").performClick()
@@ -94,11 +109,15 @@ class CardEditorDesignTest(private val width: Int, private val fontScale: Float)
         }
         compose.onNodeWithTag("editor-title").assertTextContains(card.title)
         compose.onNodeWithTag("editor-description").assertTextContains(card.description)
+        display()
         compose.onNodeWithText("Широкая").performScrollTo().assertIsSelected()
+        done()
         compose.onNodeWithContentDescription("Назад").performClick()
         compose.runOnIdle { assertEquals(1, closed) }
         compose.onNodeWithText("Отменить изменения?").assertDoesNotExist()
+        display()
         compose.onNodeWithText("Удалить изображение").performScrollTo().performClick()
+        done()
         compose.onNodeWithContentDescription("Назад").performClick()
         compose.onNodeWithText("Отменить изменения?").assertIsDisplayed()
         compose.onNodeWithText("Продолжить редактирование").performClick()
@@ -107,16 +126,20 @@ class CardEditorDesignTest(private val width: Int, private val fontScale: Float)
         compose.runOnIdle { back.onBackPressed() }
         compose.onNodeWithText("Отменить изменения?").assertDoesNotExist()
         compose.runOnIdle { assertEquals(2, closed) }
+        display()
         compose.onNodeWithText("Обычная").performScrollTo().performClick()
+        done()
         compose.onNodeWithTag("editor-save").performClick()
         compose.onNodeWithTag("editor-save").assertIsNotEnabled()
         compose.onNodeWithContentDescription("Назад").assertIsNotEnabled()
         compose.runOnIdle { assertEquals(CardSize.NORMAL, savedSize); saving = false; error = "Ошибка сохранения" }
         compose.onNodeWithText("Ошибка сохранения").assertIsDisplayed()
         compose.onNodeWithTag("editor-title").assertTextContains(card.title)
+        other()
         compose.onNodeWithText("Удалить карточку").performScrollTo().performClick()
         compose.onNodeWithText("Отмена").performClick()
         compose.runOnIdle { assertEquals(0, deleted) }
+        other()
         compose.onNodeWithText("Удалить карточку").performClick()
         compose.onNodeWithText("Удалить", substring = false).performClick()
         compose.runOnIdle { assertEquals(1, deleted) }
@@ -140,6 +163,7 @@ class CardEditorDesignTest(private val width: Int, private val fontScale: Float)
             compose.setContent {
                 Frame { CardEditorScreen(card, false, null, image, {}, { image = null }, {}, {}, { _, _, _ -> }, {}) }
             }
+            display()
             compose.onNodeWithTag("editor-image").performScrollTo().assertIsDisplayed()
             compose.runOnIdle { image = replacement }
             compose.onNodeWithText("Заменить изображение").performScrollTo().assertIsDisplayed()
@@ -154,6 +178,7 @@ class CardEditorDesignTest(private val width: Int, private val fontScale: Float)
             compose.onNodeWithText("Удалить изображение").performScrollTo().performClick()
             compose.onNodeWithText("Выбрать изображение").performScrollTo().assertIsDisplayed()
             compose.onNodeWithTag("editor-image").assertDoesNotExist()
+            done()
             compose.onNodeWithContentDescription("Назад").performClick()
             compose.onNodeWithText("Отменить изменения?").assertIsDisplayed()
         } finally {

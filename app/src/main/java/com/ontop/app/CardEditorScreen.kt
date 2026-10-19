@@ -8,10 +8,10 @@ import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,8 +28,12 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.ontop.app.data.CardEntity
 import com.ontop.app.data.CardSize
+import com.ontop.app.text.*
 
 /** One editor route for both creation and updates; persistence stays in BoardViewModel. */
 @Composable
@@ -44,31 +48,46 @@ internal fun CardEditorScreen(
     onDismiss: () -> Unit,
     onSave: (String, String, CardSize) -> Unit,
     onDelete: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    reminderChanged: Boolean = false,
+    remindersReady: Boolean = true,
+    onReminders: () -> Unit = {},
+    reminderLoadError: String? = null,
+    onRetryReminders: () -> Unit = {},
+    onSaveFormatted: ((String, String, CardSize, String?) -> Unit)? = null,
+    onInlineImport: ((Uri, (String) -> Unit) -> Unit)? = null,
+    onInlineDraftPaths: (Set<String>) -> Unit = {}
 ) {
     // Capture the initial values once: a Room emission must not reset an active draft.
     val initialTitle = rememberSaveable(card?.id) { card?.title.orEmpty() }
     val initialDescription = rememberSaveable(card?.id) { card?.description.orEmpty() }
+    val initialDocument = rememberSaveable(card?.id) { RichTextCodec.decode(initialDescription, card?.formatting) }
     val initialSize = rememberSaveable(card?.id) { card?.size ?: CardSize.NORMAL }
     val initialImage by rememberSaveable(card?.id) { mutableStateOf(card?.imagePath) }
     var title by rememberSaveable(card?.id) { mutableStateOf(initialTitle) }
-    var description by rememberSaveable(card?.id) { mutableStateOf(initialDescription) }
+    var document by rememberSaveable(card?.id) { mutableStateOf(initialDocument) }
+    val description = document.text
     var size by rememberSaveable(card?.id) { mutableStateOf(initialSize) }
     var confirmDiscard by rememberSaveable(card?.id) { mutableStateOf(false) }
     var confirmDelete by rememberSaveable(card?.id) { mutableStateOf(false) }
+    var displayOpen by rememberSaveable(card?.id) { mutableStateOf(false) }
+    var otherOpen by rememberSaveable(card?.id) { mutableStateOf(false) }
     var focusRequested by rememberSaveable(card?.id) { mutableStateOf(false) }
     val titleFocus = remember { FocusRequester() }
-    val descriptionFocus = remember { FocusRequester() }
+    val rootController = remember(card?.id) { NativeRichController() }
+    var bodyController by remember(card?.id) { mutableStateOf(rootController) }
+    var activePiece by rememberSaveable(card?.id) { mutableStateOf("body") }
+    var pendingInsert by rememberSaveable(card?.id) { mutableStateOf(MediaInsertPoint("body", 0)) }
+    var focusAfter by rememberSaveable(card?.id) { mutableStateOf<MediaInsertPoint?>(null) }
+    var videoDialog by rememberSaveable(card?.id) { mutableStateOf(false) }
+    var pastedVideo by rememberSaveable(card?.id) { mutableStateOf<VideoPaste?>(null) }
+    var bodyFocused by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     val formScroll = rememberScrollState()
-    val formDragged by formScroll.interactionSource.collectIsDraggedAsState()
-    val dismissKeyboard = { focus.clearFocus(); keyboard?.hide(); Unit }
-    // Gboard's floating hardware-keyboard toolbar belongs to the IME, not this screen.
-    // Dismiss it when leaving text entry; never change global keyboard preferences.
-    LaunchedEffect(formDragged) { if (formDragged) dismissKeyboard() }
-    val changed = title != initialTitle || description != initialDescription ||
-        size != initialSize || imagePath != initialImage
+    val dismissKeyboard = { focus.clearFocus(); bodyController.view?.clearFocus(); keyboard?.hide(); Unit }
+    val changed = title != initialTitle || document != initialDocument ||
+        size != initialSize || imagePath != initialImage || reminderChanged
     val leave = {
         if (!saving) {
             if (changed) confirmDiscard = true else onDismiss()
@@ -85,50 +104,137 @@ internal fun CardEditorScreen(
     val picker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
         if (uri != null) onImageSelected(uri)
     }
+    val chooseImage = {
+        dismissKeyboard()
+        try { picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
+        catch (_: Exception) { onPickerFailed() }
+    }
+    LaunchedEffect(document.imagePaths()) { onInlineDraftPaths(document.imagePaths()) }
+    fun insertBlock(block: NoteMedia) {
+        document = document.insertMedia(pendingInsert.key, pendingInsert.cursor, block)
+        focusAfter = MediaInsertPoint(block.id, 0)
+    }
+    val inlinePicker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
+        if (uri != null) onInlineImport?.invoke(uri) { path ->
+            insertBlock(NoteMedia(offset = 0, kind = MediaKind.IMAGE, path = path))
+        }
+    }
+    fun captureInsertion() { pendingInsert = MediaInsertPoint(activePiece, minOf(bodyController.start, bodyController.end)) }
+    val chooseInlineImage = {
+        captureInsertion()
+        try { inlinePicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
+        catch (_: Exception) { onPickerFailed() }
+    }
+    val imeOpen = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
+    val saveDocument = {
+        if (onSaveFormatted != null) onSaveFormatted(title, description, size, RichTextCodec.encode(document))
+        else onSave(title, description, size)
+    }
 
     Surface(modifier.fillMaxSize().testTag("card-editor"), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
-            Row(Modifier.fillMaxWidth().padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = leave, enabled = !saving) {
                     Icon(painterResource(R.drawable.ic_back), contentDescription = "Назад")
                 }
-                Text(if (card == null) "Новая карточка" else "Карточка",
-                    style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                Text(if (card == null) "Новая заметка" else "Редактирование",
+                    style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                IconButton(onClick = chooseImage, enabled = !saving) {
+                    Icon(painterResource(R.drawable.ic_cover), contentDescription = "Выбрать обложку")
+                }
+                IconButton(onClick = saveDocument,
+                    enabled = !saving && remindersReady && title.isNotBlank(), modifier = Modifier.testTag("editor-save")) {
+                    if (saving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    else Icon(painterResource(R.drawable.ic_check), contentDescription = "Сохранить заметку")
+                }
             }
             Column(
                 Modifier.weight(1f).fillMaxWidth().verticalScroll(formScroll)
-                    .padding(horizontal = 16.dp, vertical = 12.dp).testTag("editor-fields"),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .padding(horizontal = 24.dp, vertical = 20.dp).testTag("editor-fields"),
+                verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                OutlinedTextField(
+                BasicTextField(
                     value = title, onValueChange = { title = it }, enabled = !saving,
-                    label = { Text("Короткая фраза") },
-                    supportingText = { Text("Обязательно") },
-                    minLines = 2, maxLines = 5, shape = RoundedCornerShape(16.dp),
+                    textStyle = MaterialTheme.typography.headlineMedium.copy(color = MaterialTheme.colorScheme.onBackground),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    decorationBox = { field -> Box {
+                        if (title.isEmpty()) Text("Заголовок", style = MaterialTheme.typography.headlineMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f))
+                        field()
+                    } },
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences,
                         imeAction = ImeAction.Next),
-                    keyboardActions = KeyboardActions(onNext = { descriptionFocus.requestFocus() }),
+                    keyboardActions = KeyboardActions(onNext = { bodyController.focus() }),
                     modifier = Modifier.fillMaxWidth().focusRequester(titleFocus).testTag("editor-title")
+                        .semantics { contentDescription = "Заголовок заметки, обязательное поле" }
                 )
-                OutlinedTextField(
-                    value = description, onValueChange = { description = it }, enabled = !saving,
-                    label = { Text("Подробное описание") }, minLines = 3, maxLines = 8,
-                    shape = RoundedCornerShape(16.dp),
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                    modifier = Modifier.fillMaxWidth().focusRequester(descriptionFocus).testTag("editor-description")
-                )
-                Text("Изображение", style = MaterialTheme.typography.titleMedium)
+                MultimediaEditor(document, onChange = { document = it }, enabled = !saving,
+                    root = rootController, activeKey = activePiece, onControllerReady = { bodyController = it },
+                    onActive = { key, controller, focused ->
+                        if (focused) { activePiece = key; bodyController = controller; bodyFocused = true }
+                        else if (bodyController === controller) bodyFocused = false
+                    }, focusAfter = focusAfter, onFocusHandled = { focusAfter = null },
+                    onMoveCursor = { focusAfter = it }, onPaste = { pastedVideo = it })
+            }
+            if (reminderLoadError != null) {
+                Text(reminderLoadError, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
+                TextButton(onClick = onRetryReminders, enabled = !saving) { Text("Повторить загрузку напоминания") }
+            }
+            if (error != null) {
+                Text(error, color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 88.dp)
+                        .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp))
+            }
+            if (bodyFocused || document.media.isNotEmpty()) RichFormatToolbar(
+                document.pieces().firstOrNull { it.key == activePiece }?.let(document::fragment) ?: RichDocument(),
+                bodyController, enabled = !saving,
+                onInsertImage = if (onInlineImport != null) chooseInlineImage else null,
+                onInsertVideo = { captureInsertion(); videoDialog = true })
+            pastedVideo?.let { proposal ->
+                FlowRow(Modifier.heightIn(max = 128.dp).verticalScroll(rememberScrollState())) {
+                    TextButton(onClick = {
+                        val piece = document.pieces().firstOrNull { it.key == proposal.key }
+                        if (piece != null) {
+                            val fragment = document.fragment(piece)
+                            if (proposal.end <= fragment.text.length && fragment.text.substring(proposal.start, proposal.end) == proposal.text) {
+                                document = document.replacePiece(proposal.key, fragment.replace(proposal.start, proposal.end, ""))
+                                pendingInsert = MediaInsertPoint(proposal.key, proposal.start)
+                                insertBlock(NoteMedia(offset = 0, kind = MediaKind.YOUTUBE, video = proposal.video))
+                            }
+                        }
+                        pastedVideo = null
+                    }) { Text("Преобразовать ссылку в видео") }
+                    TextButton(onClick = { pastedVideo = null }) { Text("Оставить ссылкой") }
+                }
+            }
+            if (imeOpen) {
+                TextButton(onClick = dismissKeyboard, enabled = !saving,
+                    modifier = Modifier.fillMaxWidth().testTag("editor-settings-compact")) { Text("Настройки заметки") }
+            } else {
+                FlowRow(Modifier.fillMaxWidth().padding(horizontal = 8.dp).testTag("editor-settings"),
+                    horizontalArrangement = Arrangement.SpaceEvenly) {
+                    TextButton(onClick = { dismissKeyboard(); onReminders() }, enabled = !saving && remindersReady) { Text("Напоминания") }
+                    TextButton(onClick = { dismissKeyboard(); displayOpen = true }, enabled = !saving) { Text("Отображение") }
+                    TextButton(onClick = { dismissKeyboard(); otherOpen = true }, enabled = !saving) { Text("Другие настройки") }
+                }
+            }
+        }
+    }
+    if (videoDialog) InsertVideoDialog(onInsert = { video ->
+        insertBlock(NoteMedia(offset = 0, kind = MediaKind.YOUTUBE, video = video)); videoDialog = false
+    }, onClose = { videoDialog = false })
+    if (displayOpen) {
+        AlertDialog(onDismissRequest = { if (!saving) displayOpen = false }, containerColor = MaterialTheme.colorScheme.surface,
+            title = { Text("Отображение") }, text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text("Обложка", style = MaterialTheme.typography.titleMedium)
                 if (imagePath != null) {
                     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
-                        LocalCardImage(imagePath, Modifier.fillMaxWidth().height(220.dp).testTag("editor-image"),
+                        LocalCardImage(imagePath, Modifier.fillMaxWidth().height(180.dp).testTag("editor-image"),
                             contentScale = ContentScale.Fit)
                     }
                 }
-                OutlinedButton(onClick = {
-                    keyboard?.hide()
-                    try { picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
-                    catch (_: Exception) { onPickerFailed() }
-                }, enabled = !saving, modifier = Modifier.fillMaxWidth(),
+                OutlinedButton(onClick = chooseImage, enabled = !saving, modifier = Modifier.fillMaxWidth(),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))) {
                     Text(if (imagePath == null) "Выбрать изображение" else "Заменить изображение")
                 }
@@ -139,24 +245,19 @@ internal fun CardEditorScreen(
                     dismissKeyboard()
                     size = it
                 })
-                if (card != null) {
-                    TextButton(onClick = { confirmDelete = true }, enabled = !saving) {
+                }
+            }, confirmButton = { TextButton(onClick = { displayOpen = false }, enabled = !saving) { Text("Готово") } })
+    }
+    if (otherOpen) {
+        AlertDialog(onDismissRequest = { otherOpen = false }, containerColor = MaterialTheme.colorScheme.surface,
+            title = { Text("Другие настройки") }, text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text("Заметка хранится только на этом устройстве.")
+                    if (card != null) TextButton(onClick = { otherOpen = false; confirmDelete = true }, enabled = !saving) {
                         Text("Удалить карточку", color = MaterialTheme.colorScheme.error)
                     }
                 }
-            }
-            if (error != null) {
-                Text(error, color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 88.dp)
-                        .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp))
-            }
-            Button(onClick = { onSave(title, description, size) },
-                enabled = !saving && title.isNotBlank(), shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
-                    .heightIn(min = 52.dp).testTag("editor-save")) {
-                Text(if (saving) "Сохраняем…" else "Сохранить")
-            }
-        }
+            }, confirmButton = { TextButton(onClick = { otherOpen = false }) { Text("Готово") } })
     }
     if (confirmDiscard) {
         AlertDialog(onDismissRequest = { confirmDiscard = false }, title = { Text("Отменить изменения?") },

@@ -23,6 +23,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -46,21 +47,44 @@ import com.ontop.app.data.CardSize
 import com.ontop.app.ui.theme.OnTopTheme
 import com.ontop.app.ui.theme.Forest
 import com.ontop.app.ui.theme.Ink
+import com.ontop.app.backup.BackupManager
 
 @Composable
 fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId: Long? = null,
     onCardRequestHandled: () -> Unit = {}) {
+    val backupActive by BackupManager.active.collectAsState()
+    CompositionLocalProvider(com.ontop.app.text.LocalNoteMediaActive provides !backupActive) {
+        BoardScreenRoute(viewModel, lifecycle, requestedCardId, onCardRequestHandled)
+    }
+}
+
+@Composable
+private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId: Long?,
+    onCardRequestHandled: () -> Unit) {
     val flow = remember(viewModel, lifecycle) { viewModel.state.flowWithLifecycle(lifecycle) }
     val state by flow.collectAsState(initial = viewModel.state.value)
     var editorOpen by rememberSaveable { mutableStateOf(false) }
     var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
     var editing by rememberSaveable { mutableStateOf(false) }
+    var sliderOpen by rememberSaveable { mutableStateOf(false) }
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    val backupState by viewModel.backup.state.collectAsState()
+    val backupActive by BackupManager.active.collectAsState()
+    val revision by viewModel.backup.revision.collectAsState()
+    var seenRevision by rememberSaveable { mutableStateOf(revision) }
+    LaunchedEffect(revision) {
+        if (seenRevision != revision) {
+            editorOpen = false; editing = false; selectedId = null; sliderOpen = false
+            viewModel.sliderSession.currentId = null; viewModel.sliderSession.index = 0
+            seenRevision = revision
+        }
+    }
     val gridState = rememberLazyStaggeredGridState()
     val selected = state.cards.firstOrNull { it.id == selectedId }
 
     // A widget launch waits for the user to save or discard the active draft.
-    LaunchedEffect(requestedCardId, state.loading, state.cards, state.saving, editing) {
-        if (requestedCardId != null && !state.loading && !state.saving && !editing) {
+    LaunchedEffect(requestedCardId, state.loading, state.cards, state.saving, editing, backupActive) {
+        if (requestedCardId != null && !state.loading && !state.saving && !editing && !backupActive) {
             if (state.cards.any { it.id == requestedCardId }) {
                 selectedId = requestedCardId
                 editing = false
@@ -72,6 +96,11 @@ fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId
             }
         }
     }
+    if (settingsOpen || backupState.recoveryRequired) {
+        BackupSettingsScreen(viewModel, backupState, onClose = { settingsOpen = false })
+        return
+    }
+    if (backupActive) BackupProgressDialog(backupState.message)
 
     // Do not show the create form for a deleted card or before Room has loaded it.
     LaunchedEffect(state.loading, state.cards, selectedId) {
@@ -80,7 +109,7 @@ fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId
             editing = false
         }
     }
-    if (!editorOpen || !editing) BoardContent(state, gridState = gridState, onAdd = {
+    if ((!editorOpen || !editing) && (!sliderOpen || editorOpen)) BoardContent(state, gridState = gridState, onAdd = {
         selectedId = null
         editing = true
         editorOpen = true
@@ -90,7 +119,12 @@ fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId
         editing = false
         editorOpen = true
         viewModel.clearError()
-    })
+    }, onView = { viewModel.sliderSession.enter(state.cards); sliderOpen = true }, onSettings = { settingsOpen = true })
+
+    if (sliderOpen && !editorOpen) NoteSliderScreen(state.cards, viewModel.sliderSession,
+        onClose = { sliderOpen = false },
+        onEdit = { selectedId = it.id; editing = true; editorOpen = true; viewModel.clearError() },
+        onDetails = { selectedId = it.id; editing = false; editorOpen = true; viewModel.clearError() })
 
     if (editorOpen && selected != null && !editing) {
         CardDetailsDialog(selected, viewModel, lifecycle, state,
@@ -99,18 +133,12 @@ fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId
     }
     if (editorOpen && editing && (selectedId == null || selected != null)) {
         LaunchedEffect(selectedId) { viewModel.beginImageEdit(selected) }
-        CardEditorScreen(
+        CardEditorRoute(
             card = selected,
-            saving = state.saving,
-            error = state.error,
-            imagePath = state.draftImagePath,
-            onImageSelected = viewModel::importImage,
-            onRemoveImage = viewModel::removeDraftImage,
-            onPickerFailed = viewModel::imagePickerFailed,
-            onDismiss = { viewModel.cancelImageEdit { editing = false; editorOpen = selected != null } },
-            onSave = { title, description, size ->
-                viewModel.save(selected, title, description, size) { editorOpen = false; editing = false }
-            },
+            state = state,
+            viewModel = viewModel,
+            onDismiss = { viewModel.cancelImageEdit { editing = false; editorOpen = selected != null && !sliderOpen } },
+            onSaved = { editorOpen = false; editing = false },
             onDelete = { selected?.let { card -> viewModel.delete(card) { editorOpen = false; editing = false } } }
         )
     }
@@ -118,7 +146,8 @@ fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId
 
 @Composable
 internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEntity) -> Unit,
-    gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState()) {
+    gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(), onView: () -> Unit = {},
+    onSettings: () -> Unit = {}) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         floatingActionButton = {
@@ -132,9 +161,9 @@ internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnt
         }
     ) { innerPadding ->
         Column(Modifier.fillMaxSize().padding(innerPadding).consumeWindowInsets(innerPadding)) {
-            Text("OnTop", style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+            BoardHeader(onSettings)
+            TextButton(onClick = onView, enabled = !state.loading,
+                modifier = Modifier.padding(horizontal = 12.dp)) { Text("Просмотр →") }
             if (state.error != null) {
                 Text(state.error, color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(horizontal = 20.dp))

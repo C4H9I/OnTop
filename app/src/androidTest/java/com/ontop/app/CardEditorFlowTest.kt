@@ -36,6 +36,13 @@ class CardEditorFlowTest {
         fun shell(command: String) = android.os.ParcelFileDescriptor.AutoCloseInputStream(
             instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText().trim() }
         val keyboardSetting = shell("settings get secure show_ime_with_hard_keyboard")
+        fun display() {
+            if (compose.onAllNodesWithTag("editor-settings-compact").fetchSemanticsNodes().isNotEmpty()) {
+                compose.onNodeWithTag("editor-settings-compact").performClick()
+            }
+            compose.onNodeWithText("Отображение").performClick()
+        }
+        fun done() { compose.onNodeWithText("Готово").performClick() }
         check(keyboardSetting in listOf("0", "1", "null"))
         fun awaitHiddenIme() {
             if (android.os.Build.VERSION.SDK_INT >= 30) {
@@ -73,17 +80,14 @@ class CardEditorFlowTest {
                 }
             }
             compose.onNodeWithTag("editor-description").performScrollTo().performTextInput("Подробности")
-            // A manual form drag ends text entry, including Gboard's floating toolbar.
+            // Scrolling a note must keep text entry active; settings explicitly end it.
             compose.onNodeWithTag("editor-fields").performTouchInput { swipeUp() }
-            awaitHiddenIme()
-            compose.onNodeWithTag("editor-description").assertIsNotFocused()
-            compose.onNodeWithTag("editor-description").performScrollTo().performClick()
-            if (android.os.Build.VERSION.SDK_INT >= 30) awaitDockedKeyboard(compose, "editor-save")
             compose.onNodeWithTag("editor-description").assertIsFocused()
+            display()
             compose.onNodeWithTag("size-NORMAL").performScrollTo().assertIsSelected()
             compose.onNodeWithText("Широкая").performScrollTo().performClick()
+            done()
             awaitHiddenIme()
-            compose.onNodeWithTag("size-WIDE").assertIsSelected()
             assertTrue(db.cardDao().observeCards().first().isEmpty())
             InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")?.let { output ->
                 val file = File(output, "design-review/editor-size-no-ime.png")
@@ -99,8 +103,10 @@ class CardEditorFlowTest {
             assertEquals(CardSize.WIDE, original.size)
             compose.onNodeWithTag("card-${original.id}").performClick()
             compose.onNodeWithText("Редактировать").performClick()
+            display()
             compose.onNodeWithTag("size-WIDE").performScrollTo().assertIsSelected()
             compose.onNodeWithTag("size-NORMAL").performClick()
+            done()
             assertEquals(CardSize.WIDE, db.cardDao().findById(original.id)!!.size)
             compose.onNodeWithTag("editor-title").performTextReplacement("Несохранённая мысль")
             compose.onNodeWithContentDescription("Назад").performClick()
@@ -108,8 +114,10 @@ class CardEditorFlowTest {
             compose.waitUntil(5_000) { compose.onAllNodesWithTag("card-details").fetchSemanticsNodes().isNotEmpty() }
             assertEquals(original, db.cardDao().findById(original.id))
             compose.onNodeWithText("Редактировать").performClick()
+            display()
             compose.onNodeWithTag("size-WIDE").performScrollTo().assertIsSelected()
             compose.onNodeWithTag("size-NORMAL").performClick()
+            done()
             compose.onNodeWithTag("editor-title").performTextReplacement("Обновлённая мысль")
             compose.onNodeWithTag("editor-save").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithTag("card-editor").fetchSemanticsNodes().isEmpty() }
@@ -121,6 +129,7 @@ class CardEditorFlowTest {
             assertEquals(original.sortOrder, updated.sortOrder)
             compose.onNodeWithTag("card-${updated.id}").performClick()
             compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithText("Другие настройки").performClick()
             compose.onNodeWithText("Удалить карточку").performScrollTo().performClick()
             compose.onNodeWithText("Удалить", substring = false).performClick()
             withTimeout(5_000) { db.cardDao().observeCards().first { it.isEmpty() } }

@@ -1,7 +1,48 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
+import org.gradle.work.DisableCachingByDefault
+import java.time.Instant
+import java.util.UUID
+
 plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+/** Execution-time metadata: configuration cache never captures a timestamp or UUID. */
+@DisableCachingByDefault(because = "Every APK build must carry a fresh identity")
+abstract class GenerateBuildMetadata : DefaultTask() {
+    @get:Input abstract val buildTypeName: Property<String>
+    @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
+
+    init {
+        outputs.upToDateWhen { false }
+        outputs.doNotCacheIf("Build identities must not be restored from the build cache") { true }
+    }
+
+    @TaskAction fun generate() {
+        val directory = outputDirectory.get().asFile
+        check(directory.isDirectory || directory.mkdirs())
+        directory.resolve("ontop_build.json").writeText(
+            """{"buildId":"${UUID.randomUUID()}","builtAt":"${Instant.now()}","buildType":"${buildTypeName.get()}"}""",
+            Charsets.UTF_8
+        )
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        val metadata = tasks.register<GenerateBuildMetadata>("generate${variant.name.replaceFirstChar { it.uppercaseChar() }}BuildMetadata") {
+            buildTypeName.set(variant.buildType ?: variant.name)
+            outputDirectory.set(layout.buildDirectory.dir("generated/buildMetadata/${variant.name}"))
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(metadata, GenerateBuildMetadata::outputDirectory)
+    }
 }
 
 android {

@@ -10,6 +10,10 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 abstract class CardDao {
+    @Query("DELETE FROM cards")
+    abstract suspend fun deleteAll()
+    @Query("SELECT * FROM cards")
+    abstract suspend fun allCards(): List<CardEntity>
     @Query("SELECT * FROM cards WHERE id = :id")
     abstract suspend fun findById(id: Long): CardEntity?
 

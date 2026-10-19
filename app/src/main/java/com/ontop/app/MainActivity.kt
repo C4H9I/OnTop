@@ -27,6 +27,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        com.ontop.app.reminders.ReminderRestoreJob.enqueue(this)
         requestedCard.value = (savedInstanceState?.getLong("pending_widget_card")
             ?: intent.getLongExtra(EXTRA_CARD_ID, 0)).takeIf { it > 0 }
         val viewModel = ViewModelProvider(this)[BoardViewModel::class.java]
