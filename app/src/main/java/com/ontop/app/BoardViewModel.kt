@@ -21,12 +21,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.ontop.app.widget.notifyCardWidgets
+import androidx.room.withTransaction
+import com.ontop.app.data.NoteInteractionRepository
+import com.ontop.app.data.NoteInteractionType
 import com.ontop.app.text.RichTextCodec
 import com.ontop.app.text.imagePaths
 import com.ontop.app.backup.BackupManager
 
 data class BoardState(
     val cards: List<CardEntity> = emptyList(),
+    val storedCards: List<CardEntity> = emptyList(),
     val loading: Boolean = true,
     val saving: Boolean = false,
     val error: String? = null,
@@ -39,10 +43,18 @@ data class BoardState(
 
 class BoardViewModel internal constructor(
     application: Application,
-    database: OnTopDatabase,
+    private val database: OnTopDatabase,
     internal val backup: BackupManager,
     private val boardPreferences: BoardPreferences = BoardPreferences(application)
 ) : AndroidViewModel(application) {
+    internal val analysis = com.ontop.app.analysis.AnalysisExporter(application, database)
+    internal fun exportAnalysis(uri: Uri) {
+        if (uri.scheme != "content") { analysis.pickerFailed(); return }
+        viewModelScope.launch {
+            analysis.export { getApplication<Application>().contentResolver.openOutputStream(uri, "wt")
+                ?: error("Не удалось открыть JSON для записи") }
+        }
+    }
     @JvmOverloads constructor(application: Application, database: OnTopDatabase = OnTopDatabase.getInstance(application)) :
         this(application, database, BackupManager.get(application, database))
     internal fun createBackup(uri: Uri) {
@@ -60,6 +72,23 @@ class BoardViewModel internal constructor(
     internal fun recoverBackup() { viewModelScope.launch { backup.recover() } }
     internal val sliderSession = NoteSliderSession()
     private val dao = database.cardDao()
+    internal val interactions = NoteInteractionRepository(database)
+
+    internal fun recordOpening(id: Long, type: NoteInteractionType) {
+        require(type.isOpening)
+        if (BackupManager.active.value || backup.state.value.recoveryRequired) return
+        val occurredAt = System.currentTimeMillis()
+        val revision = backup.revision.value
+        viewModelScope.launch {
+            try {
+                BackupManager.dataAccess {
+                    if (!BackupManager.active.value && !backup.state.value.recoveryRequired && backup.revision.value == revision)
+                        interactions.record(id, type, occurredAt)
+                }
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (error: Exception) { android.util.Log.w("OnTop", "Could not record local interaction", error) }
+        }
+    }
     private val tagDao = database.tagDao()
     private val commentDao = database.cardCommentDao()
     private val reminderDao = database.reminderDao()
@@ -68,6 +97,17 @@ class BoardViewModel internal constructor(
     private var imageEditorActive = false
     private var originalImagePath: String? = null
     private val inlineDraftPaths = mutableSetOf<String>()
+    private val mutableSharedImage = MutableStateFlow<Pair<String, String>?>(null)
+    internal val sharedInlineImage = mutableSharedImage.asStateFlow()
+    private var sharedImageRequest: String? = null
+    internal fun prepareSharedImage(id: String, uri: Uri, restoredPath: String?) {
+        if (sharedImageRequest == id) return
+        sharedImageRequest = id
+        if (restoredPath != null) {
+            trackInlineDraft(setOf(restoredPath))
+            mutableSharedImage.value = id to restoredPath
+        } else importInlineImage(uri) { path -> mutableSharedImage.value = id to path }
+    }
     internal fun trackInlineDraft(paths: Set<String>) { inlineDraftPaths.addAll(paths) }
     internal fun importInlineImage(uri: Uri, onImported: (String) -> Unit) = write({}) {
         val path = images.import(uri)
@@ -75,11 +115,11 @@ class BoardViewModel internal constructor(
         onImported(path)
     }
 
-    fun beginImageEdit(card: CardEntity?) {
+    fun beginImageEdit(card: CardEntity?, restoredDraftPath: String? = null) {
         if (imageEditorActive) return
         imageEditorActive = true
         originalImagePath = card?.imagePath
-        mutableState.update { it.copy(draftImagePath = originalImagePath) }
+        mutableState.update { it.copy(draftImagePath = restoredDraftPath ?: originalImagePath) }
     }
 
     fun importImage(uri: Uri) = write({}) {
@@ -101,6 +141,7 @@ class BoardViewModel internal constructor(
         inlineDraftPaths.toList().forEach { removeImage(it) }
         inlineDraftPaths.clear()
         imageEditorActive = false
+        mutableState.update { it.copy(draftImagePath = null) }
     }
 
     fun imagePickerFailed() {
@@ -123,12 +164,20 @@ class BoardViewModel internal constructor(
     internal fun observeReminder(cardId: Long) = reminderDao.observeForCard(cardId)
     internal suspend fun saveReminder(cardId: Long, hour: Int, minute: Int, enabled: Boolean) {
         check(!BackupManager.active.value && !backup.state.value.recoveryRequired)
-        BackupManager.dataAccess { reminders.save(cardId, hour, minute, enabled) }
+        BackupManager.dataAccess {
+            val before = interactions.snapshot(cardId)
+            reminders.save(cardId, hour, minute, enabled)
+            interactions.recordEditIfChanged(before, cardId)
+        }
     }
     internal suspend fun saveReminder(cardId: Long, schedule: com.ontop.app.reminders.ReminderSchedule,
         enabled: Boolean, pausedUntil: Long?) {
         check(!BackupManager.active.value && !backup.state.value.recoveryRequired)
-        BackupManager.dataAccess { reminders.save(cardId, schedule, enabled, pausedUntil) }
+        BackupManager.dataAccess {
+            val before = interactions.snapshot(cardId)
+            reminders.save(cardId, schedule, enabled, pausedUntil)
+            interactions.recordEditIfChanged(before, cardId)
+        }
     }
 
     fun addComment(cardId: Long, text: String, onSuccess: (Long) -> Unit) {
@@ -136,8 +185,11 @@ class BoardViewModel internal constructor(
         if (trimmed.isEmpty()) return
         var insertedId = 0L
         write({ onSuccess(insertedId) }) {
-            insertedId = commentDao.insert(CardCommentEntity(cardId = cardId, text = trimmed,
-                createdAt = System.currentTimeMillis()))
+            database.withTransaction {
+                insertedId = commentDao.insert(CardCommentEntity(cardId = cardId, text = trimmed,
+                    createdAt = System.currentTimeMillis()))
+                interactions.record(cardId, NoteInteractionType.COMMENT_ADDED)
+            }
         }
     }
 
@@ -201,9 +253,10 @@ class BoardViewModel internal constructor(
                 backup.recover()
                 val sortMode = boardPreferences.loadSort()
                 mutableState.update { it.copy(sortMode = sortMode) }
-                combine(dao.observeCards(), tagDao.observeTags()) { cards, tags -> cards to tags }.collect { (cards, topics) ->
+                combine(dao.observeAllCards(), tagDao.observeTags()) { cards, tags -> cards to tags }.collect { (cards, topics) ->
                     val tags = topics.map { it.tag }
-                    mutableState.update { it.copy(cards = cards, tags = tags, cardTags = topics.flatMap { topic -> topic.links },
+                    mutableState.update { it.copy(cards = cards.filter { card -> card.status == com.ontop.app.data.CardStatus.ACTIVE },
+                        storedCards = cards, tags = tags, cardTags = topics.flatMap { topic -> topic.links },
                         selectedTagId = it.selectedTagId?.takeIf { id -> tags.any { tag -> tag.id == id } }, loading = false) }
                 }
             } catch (exception: CancellationException) {
@@ -223,24 +276,28 @@ class BoardViewModel internal constructor(
     internal fun saveNote(card: CardEntity?, title: String, description: String, size: CardSize,
         reminder: com.ontop.app.reminders.ReminderDraft?, reminderChanged: Boolean, onSuccess: () -> Unit,
         formatting: String? = if (description == card?.description) card?.formatting else null,
-        importance: Int = card?.importance ?: 50, tagIds: List<Long>? = null, newTagNames: List<String> = emptyList()) {
+        importance: Int = card?.importance ?: 50, tagIds: List<Long>? = null, newTagNames: List<String> = emptyList(),
+        progress: Int? = card?.progress) {
         if (title.isBlank()) return
         require(importance in 0..100)
+        require(progress == null || progress in 0..100)
         write(onSuccess, "Не удалось сохранить заметку и напоминание. Черновик сохранён на экране — повторите сохранение.") {
             val now = System.currentTimeMillis()
             val imagePath = mutableState.value.draftImagePath
             val document = if (card == null) {
                 CardEntity(
                     title = title.trim(), description = description, size = size,
-                    createdAt = now, updatedAt = now, sortOrder = 0, imagePath = imagePath, formatting = formatting, importance = importance
+                    createdAt = now, updatedAt = now, sortOrder = 0, imagePath = imagePath, formatting = formatting, importance = importance, progress = progress
                 )
             } else {
                 card.copy(
                     title = title.trim(), description = description, size = size, updatedAt = now,
-                    imagePath = imagePath, formatting = formatting, importance = importance
+                    imagePath = imagePath, formatting = formatting, importance = importance, progress = progress
                 )
             }
-            reminders.saveNote(document, card == null, reminder, reminderChanged, tagIds, newTagNames)
+            val before = card?.let { interactions.snapshot(it.id) }
+            reminders.saveNote(document, card == null, reminder, reminderChanged, tagIds, newTagNames,
+                onSaved = { id -> interactions.recordEditIfChanged(before, id) })
             val oldInline = card?.let { RichTextCodec.decode(it.description, it.formatting).imagePaths() }.orEmpty()
             (oldInline + inlineDraftPaths).forEach { removeImage(it) }
             inlineDraftPaths.clear()
@@ -251,11 +308,34 @@ class BoardViewModel internal constructor(
         }
     }
 
-    fun delete(card: CardEntity, onSuccess: () -> Unit) = write(onSuccess) {
-        reminders.deleteCard(card)
+    internal fun savePercentages(id: Long, importance: Int, progress: Int?, onSuccess: () -> Unit) {
+        require(importance in 0..100 && (progress == null || progress in 0..100))
+        write(onSuccess, "Не удалось сохранить важность и готовность. Повторите сохранение.") {
+            database.withTransaction {
+                val before = interactions.snapshot(id)
+                check(dao.updatePercentages(id, importance, progress, System.currentTimeMillis()) == 1)
+                interactions.recordEditIfChanged(before, id)
+            }
+            refreshWidgets(id)
+        }
+    }
+
+    internal fun changeStatus(card: CardEntity, status: com.ontop.app.data.CardStatus, onSuccess: () -> Unit) = write(onSuccess) {
+        reminders.changeStatus(card.id, status)
         refreshWidgets(card.id)
-        removeImage(card.imagePath)
-        RichTextCodec.decode(card.description, card.formatting).imagePaths().forEach { removeImage(it) }
+    }
+
+    fun delete(card: CardEntity, onSuccess: () -> Unit) = changeStatus(card, com.ontop.app.data.CardStatus.TRASHED) {
+        cancelImageEdit(onSuccess)
+    }
+
+    internal fun permanentlyDelete(card: CardEntity, onSuccess: () -> Unit) = write(onSuccess) {
+        val actual = dao.findById(card.id) ?: error("Заметка недоступна")
+        check(actual.status == com.ontop.app.data.CardStatus.TRASHED)
+        reminders.deleteCard(actual)
+        refreshWidgets(actual.id)
+        removeImage(actual.imagePath)
+        RichTextCodec.decode(actual.description, actual.formatting).imagePaths().forEach { removeImage(it) }
         inlineDraftPaths.toList().forEach { removeImage(it) }
         inlineDraftPaths.clear()
         val draft = mutableState.value.draftImagePath

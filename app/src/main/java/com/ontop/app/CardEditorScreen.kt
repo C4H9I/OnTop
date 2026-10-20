@@ -6,9 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.BasicTextField
@@ -20,7 +18,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -60,20 +57,37 @@ internal fun CardEditorScreen(
     onInlineDraftPaths: (Set<String>) -> Unit = {},
     onSaveWithImportance: ((String, String, CardSize, String?, Int) -> Unit)? = null,
     availableTags: List<TagEntity> = emptyList(), initialTagIds: List<Long> = emptyList(),
-    onSaveTagged: ((String, String, CardSize, String?, Int, List<Long>, List<String>) -> Unit)? = null
+    onSaveTagged: ((String, String, CardSize, String?, Int, Int?, List<Long>, List<String>) -> Unit)? = null,
+    initialSharedTitle: String? = null, initialSharedText: String? = null, sharedInlinePath: String? = null
 ) {
     // Capture the initial values once: a Room emission must not reset an active draft.
-    val initialTitle = rememberSaveable(card?.id) { card?.title.orEmpty() }
-    val initialDescription = rememberSaveable(card?.id) { card?.description.orEmpty() }
-    val initialDocument = rememberSaveable(card?.id) { RichTextCodec.decode(initialDescription, card?.formatting) }
+    val initialTitle = rememberSaveable(card?.id) { card?.title ?: initialSharedTitle.orEmpty() }
+    val initialDescription = rememberSaveable(card?.id) { card?.description ?: initialSharedText.orEmpty() }
+    val initialDocument = rememberSaveable(card?.id) {
+        RichTextCodec.decode(initialDescription, card?.formatting).let {
+            if (card == null && initialSharedText != null) it.convertYouTubeLinks() else it
+        }
+    }
     val initialSize = rememberSaveable(card?.id) { card?.size ?: CardSize.NORMAL }
     val initialImage by rememberSaveable(card?.id) { mutableStateOf(card?.imagePath) }
     var title by rememberSaveable(card?.id) { mutableStateOf(initialTitle) }
     var document by rememberSaveable(card?.id) { mutableStateOf(initialDocument) }
+    var sharedImageInserted by rememberSaveable(card?.id) { mutableStateOf(false) }
+    LaunchedEffect(sharedInlinePath) {
+        if (sharedInlinePath != null && !sharedImageInserted) {
+            document = document.copy(media = document.media + NoteMedia(offset = document.text.length,
+                kind = MediaKind.IMAGE, path = sharedInlinePath)).normalized()
+            onInlineDraftPaths(setOf(sharedInlinePath))
+            sharedImageInserted = true
+        }
+    }
     val description = document.text
     var size by rememberSaveable(card?.id) { mutableStateOf(initialSize) }
-    val initialImportance = rememberSaveable(card?.id) { card?.importance ?: 50 }
-    var importance by rememberSaveable(card?.id) { mutableIntStateOf(initialImportance) }
+    val initialPercentages = rememberSaveable(card?.id) { NotePercentages(card?.importance ?: 50, card?.progress) }
+    var percentages by rememberSaveable(card?.id) { mutableStateOf(initialPercentages) }
+    val importance = percentages.importance
+    val progress = percentages.progress
+    var percentagesOpen by rememberSaveable(card?.id) { mutableStateOf(false) }
     val topics = rememberEditorTopics(card?.id, initialTagIds)
     var confirmDiscard by rememberSaveable(card?.id) { mutableStateOf(false) }
     var confirmDelete by rememberSaveable(card?.id) { mutableStateOf(false) }
@@ -94,8 +108,7 @@ internal fun CardEditorScreen(
     val formScroll = rememberScrollState()
     val dismissKeyboard = { focus.clearFocus(); bodyController.view?.clearFocus(); keyboard?.hide(); Unit }
     val changed = title != initialTitle || document != initialDocument ||
-        size != initialSize || imagePath != initialImage || reminderChanged || importance != initialImportance ||
-        topics.changed
+        size != initialSize || imagePath != initialImage || reminderChanged || percentages != initialPercentages || topics.changed
     val leave = {
         if (!saving) {
             if (changed) confirmDiscard = true else onDismiss()
@@ -135,7 +148,7 @@ internal fun CardEditorScreen(
     }
     val imeOpen = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
     val saveDocument = {
-        if (onSaveTagged != null) onSaveTagged(title, description, size, RichTextCodec.encode(document), importance, topics.ids.toList(), topics.names.toList())
+        if (onSaveTagged != null) onSaveTagged(title, description, size, RichTextCodec.encode(document), importance, progress, topics.ids.toList(), topics.names.toList())
         else if (onSaveWithImportance != null) onSaveWithImportance(title, description, size, RichTextCodec.encode(document), importance)
         else if (onSaveFormatted != null) onSaveFormatted(title, description, size, RichTextCodec.encode(document))
         else onSave(title, description, size)
@@ -207,9 +220,8 @@ internal fun CardEditorScreen(
                         if (piece != null) {
                             val fragment = document.fragment(piece)
                             if (proposal.end <= fragment.text.length && fragment.text.substring(proposal.start, proposal.end) == proposal.text) {
-                                document = document.replacePiece(proposal.key, fragment.replace(proposal.start, proposal.end, ""))
-                                pendingInsert = MediaInsertPoint(proposal.key, proposal.start)
-                                insertBlock(NoteMedia(offset = 0, kind = MediaKind.YOUTUBE, video = proposal.video))
+                                document = document.linkToVideo(proposal.key,
+                                    VideoLinkOccurrence(proposal.start, proposal.end, proposal.video))
                             }
                         }
                         pastedVideo = null
@@ -234,50 +246,16 @@ internal fun CardEditorScreen(
     if (videoDialog) InsertVideoDialog(onInsert = { video ->
         insertBlock(NoteMedia(offset = 0, kind = MediaKind.YOUTUBE, video = video)); videoDialog = false
     }, onClose = { videoDialog = false })
-    if (displayOpen) {
-        AlertDialog(onDismissRequest = { if (!saving) displayOpen = false }, containerColor = MaterialTheme.colorScheme.surface,
-            title = { Text("Отображение") }, text = {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("Обложка", style = MaterialTheme.typography.titleMedium)
-                if (imagePath != null) {
-                    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
-                        LocalCardImage(imagePath, Modifier.fillMaxWidth().height(180.dp).testTag("editor-image"),
-                            contentScale = ContentScale.Fit)
-                    }
-                }
-                OutlinedButton(onClick = chooseImage, enabled = !saving, modifier = Modifier.fillMaxWidth(),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))) {
-                    Text(if (imagePath == null) "Выбрать изображение" else "Заменить изображение")
-                }
-                if (imagePath != null) {
-                    TextButton(onClick = onRemoveImage, enabled = !saving) { Text("Удалить изображение") }
-                }
-                CardSizeSelector(size = size, enabled = !saving, onSelect = {
-                    dismissKeyboard()
-                    size = it
-                })
-                }
-            }, confirmButton = { TextButton(onClick = { displayOpen = false }, enabled = !saving) { Text("Готово") } })
-    }
-    if (otherOpen) {
-        AlertDialog(onDismissRequest = { otherOpen = false }, containerColor = MaterialTheme.colorScheme.surface,
-            title = { Text("Другие настройки") }, text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    Text("Заметка хранится только на этом устройстве.")
-                    Text("Важность: $importance%", style = MaterialTheme.typography.titleMedium)
-                    Slider(value = importance.toFloat(), onValueChange = { importance = (kotlin.math.round(it / 5f).toInt() * 5).coerceIn(0, 100) },
-                        valueRange = 0f..100f, steps = 19, enabled = !saving,
-                        modifier = Modifier.testTag("editor-importance").semantics { contentDescription = "Важность заметки" })
-                    Text("Как часто возвращать внимание к этой мысли. Это не срочность задачи.",
-                        style = MaterialTheme.typography.bodySmall)
-                    if (card != null) TextButton(onClick = { otherOpen = false; confirmDelete = true }, enabled = !saving) {
-                        Text("Удалить карточку", color = MaterialTheme.colorScheme.error)
-                    }
-                }
-            }, confirmButton = { TextButton(onClick = { otherOpen = false }) { Text("Готово") } })
-    }
+    if (displayOpen) EditorDisplayDialog(imagePath, size, saving, chooseImage, onRemoveImage,
+        onSize = { dismissKeyboard(); size = it }, onClose = { displayOpen = false })
+    if (otherOpen) EditorOtherDialog(card != null, importance, progress, saving,
+        onImportance = { percentages = percentages.copy(importance = it) }, onPercentages = { percentagesOpen = true },
+        onDelete = { otherOpen = false; confirmDelete = true }, onClose = { otherOpen = false })
     if (topics.open) TagPickerDialog(availableTags, topics.ids, topics.names, !saving,
         onChange = { ids, names -> topics.ids = ids; topics.names = names }, onClose = { topics.open = false })
+    if (percentagesOpen) NotePercentagesDialog(card?.id ?: 0L, importance, progress,
+        onDismiss = { percentagesOpen = false },
+        onSave = { newImportance, newProgress -> percentages = NotePercentages(newImportance, newProgress); percentagesOpen = false })
     if (confirmDiscard) {
         AlertDialog(onDismissRequest = { confirmDiscard = false }, title = { Text("Отменить изменения?") },
             confirmButton = {
@@ -288,8 +266,8 @@ internal fun CardEditorScreen(
     }
     if (confirmDelete && card != null) {
         AlertDialog(onDismissRequest = { if (!saving) confirmDelete = false },
-            title = { Text("Удалить карточку?") },
-            text = { Text("Карточка «${card.title}» будет удалена. Восстановить её не получится.") },
+            title = { Text("Переместить в корзину?") },
+            text = { Text("Заметку «${card.title}» можно будет восстановить из корзины.") },
             confirmButton = { TextButton(onClick = onDelete, enabled = !saving) { Text("Удалить") } },
             dismissButton = { TextButton(onClick = { confirmDelete = false }, enabled = !saving) { Text("Отмена") } })
     }

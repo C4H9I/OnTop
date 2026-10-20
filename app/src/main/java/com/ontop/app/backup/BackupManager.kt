@@ -95,7 +95,7 @@ internal class BackupManager internal constructor(
     }
 
     internal suspend fun snapshot(): BackupData = db.withTransaction {
-        BackupData(db.cardDao().allCards(), db.cardCommentDao().all(), db.reminderDao().all(), db.tagDao().all(), db.tagDao().allLinks())
+        BackupData(db.cardDao().allCards(), db.cardCommentDao().all(), db.reminderDao().all(), db.tagDao().all(), db.tagDao().allLinks(), db.noteInteractionDao().all())
     }
 
     private fun newStage(): File {
@@ -110,7 +110,7 @@ internal class BackupManager internal constructor(
         progress("Подготовка резервной копии…")
         val stage = newStage()
         try {
-            val data = reminders.withDataLock { snapshot() }
+            val data = reminders.withDataLock { snapshot().withoutTrash() }
             val archive = File(stage, "backup.ontop")
             archive.outputStream().use { BackupFormat.write(data, { CardImageStore(context).resolve(it) }, it) }
             require(archive.length() <= BackupLimits().archive)
@@ -157,7 +157,7 @@ internal class BackupManager internal constructor(
                         formatting = if (doc.imagePaths().isEmpty()) card.formatting else RichTextCodec.encode(doc.copy(
                             media = doc.media.map { block -> block.path?.let { block.copy(path = paths.getValue(it)) } ?: block })))
                 }, reminders = original.reminders.map { it.copy(id = newId(), nextAt = null, snoozeAt = null) })
-                writeJournal(JSONObject().put("fingerprint", BackupFormat.fingerprint(incoming)).put("fingerprintVersion", 2)
+                writeJournal(JSONObject().put("fingerprint", BackupFormat.fingerprint(incoming)).put("fingerprintVersion", 5)
                     .put("generation", UUID.randomUUID().toString())
                     .put("oldRules", JSONArray(old.reminders.map { it.id })).put("oldFiles", JSONArray(old.paths().toList()))
                     .put("newFiles", JSONArray(paths.values.toList())))
@@ -183,6 +183,7 @@ internal class BackupManager internal constructor(
                     incoming.cardTags.forEach { db.tagDao().insertLink(it) }
                     incoming.comments.forEach { db.cardCommentDao().insert(it) }
                     incoming.reminders.forEach { db.reminderDao().insert(it) }
+                    incoming.interactions.forEach { db.noteInteractionDao().insert(it) }
                     checkpoint("transaction")
                 }
                 checkpoint("committed")
@@ -210,7 +211,10 @@ internal class BackupManager internal constructor(
         val record = journal.openRead().use { JSONObject(it.readBytes().toString(Charsets.UTF_8)) }
         fun strings(name: String): List<String> = record.getJSONArray(name).let { a -> (0 until a.length()).map { a.getString(it) } }
         val current = reminders.withDataLock { snapshot() }
-        val committed = BackupFormat.fingerprint(current, includeTags = record.optInt("fingerprintVersion", 1) >= 2) == record.getString("fingerprint")
+        val committed = BackupFormat.fingerprint(current, includeTags = record.optInt("fingerprintVersion", 1) >= 2,
+            includeStatus = record.optInt("fingerprintVersion", 1) >= 3,
+            includeProgress = record.optInt("fingerprintVersion", 1) >= 4,
+            includeInteractions = record.optInt("fingerprintVersion", 1) >= 5) == record.getString("fingerprint")
         if (committed) {
             progress("Обновление напоминаний и виджетов…")
             val ids = record.getJSONArray("oldRules").let { a -> (0 until a.length()).map { a.getLong(it) } }

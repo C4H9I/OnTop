@@ -69,10 +69,15 @@ class CardWidget : GlanceAppWidget() {
             if (mode == WidgetMode.ROTATION && cardId == null) title = if (selection.tagFilterEnabled)
                 "Нет заметок в выбранных темах. Измените настройки" else "Пока нет заметок"
             if (cardId != null) {
-                val card = withContext(Dispatchers.IO) {
+                val stored = withContext(Dispatchers.IO) {
                     (database ?: OnTopDatabase.getInstance(context)).cardDao().findById(cardId!!)
                 }
-                title = card?.title ?: "Карточка удалена"
+                val card = stored?.takeIf { it.status == com.ontop.app.data.CardStatus.ACTIVE }
+                title = when (stored?.status) {
+                    com.ontop.app.data.CardStatus.ARCHIVED -> "Заметка в архиве"
+                    com.ontop.app.data.CardStatus.TRASHED -> "Заметка в корзине"
+                    else -> card?.title ?: "Карточка удалена"
+                }
                 if (card == null) cardId = null
                 card?.widgetCoverPath()?.let {
                     try {
@@ -96,6 +101,7 @@ class CardWidget : GlanceAppWidget() {
         val open = Intent(context, MainActivity::class.java).apply {
             data = Uri.parse("ontop://card/${cardId ?: 0}/widget/$widgetId")
             putExtra(MainActivity.EXTRA_CARD_ID, cardId ?: 0L)
+            putExtra(MainActivity.EXTRA_OPEN_SOURCE, "widget")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val configure = Intent(context, WidgetConfigurationActivity::class.java).apply {

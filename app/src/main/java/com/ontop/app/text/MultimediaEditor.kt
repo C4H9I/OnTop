@@ -35,6 +35,16 @@ internal fun MultimediaEditor(document: RichDocument, onChange: (RichDocument) -
                 minimumLines = if (document.media.isEmpty()) 12 else 1,
                 placeholder = if (document.media.isEmpty()) "О чём хочется помнить?" else "Продолжить текст…",
                 editorTag = if (piece.index == 0) "editor-description" else "editor-text-${piece.key}")
+            youtubeLinks(document.fragment(piece).text).forEach { link ->
+                TextButton(enabled = enabled, onClick = { change(current.linkToVideo(piece.key, link)) },
+                    modifier = Modifier.testTag("link-to-video-${piece.key}-${link.start}")) {
+                    Column {
+                        Text("Преобразовать в видео")
+                        Text(link.video.source, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
             LaunchedEffect(focusAfter, piece.key) {
                 if (focusAfter?.key == piece.key) {
                     controller.focus()
@@ -55,6 +65,9 @@ internal fun MultimediaEditor(document: RichDocument, onChange: (RichDocument) -
                             change(current.removeMedia(block.id))
                             onMoveCursor(MediaInsertPoint(before.key, position))
                         }
+                    }) else null, onConvertToLink = if (enabled && block.kind == MediaKind.YOUTUBE) ({
+                        change(current.videoToLink(block.id))
+                        onMoveCursor(MediaInsertPoint(piece.key, Int.MAX_VALUE))
                     }) else null)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         TextButton(enabled = enabled, onClick = { onMoveCursor(MediaInsertPoint(piece.key, Int.MAX_VALUE)) },

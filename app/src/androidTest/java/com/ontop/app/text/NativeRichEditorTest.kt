@@ -9,6 +9,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NativeRichEditorTest {
+    @Test fun delayedParentValueDoesNotOverwriteNativeEditOrSelection() = onMain {
+        val editor = NoteEditText(InstrumentationRegistry.getInstrumentation().targetContext)
+        val controller = NativeRichController().apply { attach(editor) }
+        val original = RichDocument("До")
+        controller.update(original, false, 2, 2)
+        controller.insert("\nПосле 🧠")
+        val edited = controller.document
+        controller.update(original, false, 0, 0)
+        assertEquals(edited.text, editor.text.toString())
+        assertEquals(edited.text.length, editor.selectionStart)
+        controller.update(edited, false, 0, 0)
+        controller.update(edited.copy(ranges = listOf(RichRange(0, 2, RichKind.BOLD))), false, 0, 0)
+        assertEquals(edited.text.length, editor.selectionStart)
+        controller.update(RichDocument("Внешнее обновление"), false, 3, 3)
+        assertEquals("Внешнее обновление", editor.text.toString())
+        assertEquals(3, editor.selectionStart)
+    }
     private fun onMain(block: () -> Unit) {
         var failure: Throwable? = null
         InstrumentationRegistry.getInstrumentation().runOnMainSync { failure = runCatching(block).exceptionOrNull() }

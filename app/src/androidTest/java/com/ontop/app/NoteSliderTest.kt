@@ -34,7 +34,7 @@ class NoteSliderTest {
                 OnTopTheme { BoardScreen(model, owner.lifecycle) }
             }
             compose.waitUntil(5_000) { compose.onAllNodesWithTag("card-1").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Просмотр →").performClick()
+            compose.onNodeWithContentDescription("Просмотр заметок").performClick()
             compose.onNodeWithText("Редактировать").performClick()
             compose.onNodeWithTag("editor-title").performTextReplacement("Изменённая заметка")
             compose.onNodeWithTag("editor-save").performClick()

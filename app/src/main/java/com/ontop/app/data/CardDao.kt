@@ -14,17 +14,25 @@ abstract class CardDao {
     abstract suspend fun deleteAll()
     @Query("SELECT * FROM cards")
     abstract suspend fun allCards(): List<CardEntity>
+    @Query("SELECT * FROM cards WHERE status != 'TRASHED' AND id > :afterId ORDER BY id LIMIT :limit")
+    abstract suspend fun analysisPage(afterId: Long, limit: Int): List<CardEntity>
     @Query("SELECT * FROM cards WHERE id = :id")
     abstract suspend fun findById(id: Long): CardEntity?
 
-    @Query("SELECT * FROM cards ORDER BY sortOrder ASC, id ASC")
+    @Query("SELECT * FROM cards WHERE status = 'ACTIVE' ORDER BY sortOrder ASC, id ASC")
     abstract fun observeCards(): Flow<List<CardEntity>>
+
+    @Query("SELECT * FROM cards ORDER BY sortOrder ASC, id ASC")
+    abstract fun observeAllCards(): Flow<List<CardEntity>>
 
     @Insert
     abstract suspend fun insert(card: CardEntity): Long
 
     @Update
     abstract suspend fun update(card: CardEntity): Int
+
+    @Query("UPDATE cards SET importance = :importance, progress = :progress, updatedAt = :updatedAt WHERE id = :id AND status != 'TRASHED'")
+    abstract suspend fun updatePercentages(id: Long, importance: Int, progress: Int?, updatedAt: Long): Int
 
     @Delete
     abstract suspend fun delete(card: CardEntity): Int

@@ -22,7 +22,7 @@ internal val LocalNoteMediaActive = compositionLocalOf { true }
 
 @Composable
 internal fun NoteMediaView(block: NoteMedia, modifier: Modifier = Modifier, onRemove: (() -> Unit)? = null,
-    active: Boolean = true) {
+    active: Boolean = true, onConvertToLink: (() -> Unit)? = null) {
     val mediaActive = active && LocalNoteMediaActive.current
     var fullImage by remember { mutableStateOf(false) }
     var imageMenu by remember { mutableStateOf(false) }
@@ -30,7 +30,7 @@ internal fun NoteMediaView(block: NoteMedia, modifier: Modifier = Modifier, onRe
     LaunchedEffect(mediaActive) { if (!mediaActive) { playing = false; fullImage = false; imageMenu = false } }
     if (block.kind == MediaKind.YOUTUBE) {
         YouTubePreview(block.video!!, modifier.fillMaxWidth().testTag("media-${block.id}"),
-            onPlay = { if (mediaActive) playing = true }, onRemove = onRemove)
+            onPlay = { if (mediaActive) playing = true }, onRemove = onRemove, onConvertToLink = onConvertToLink)
     } else Box(modifier.fillMaxWidth().testTag("media-${block.id}")) {
         LocalCardImage(block.path!!, Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small)
             .testTag("inline-image-${block.id}").combinedClickable(

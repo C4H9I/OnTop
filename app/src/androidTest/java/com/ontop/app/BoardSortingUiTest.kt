@@ -44,7 +44,7 @@ class BoardSortingUiTest(private val width: Int) {
     @Test fun menuSortsVisibleTilesAndRestoresManualOrderOnPhoneWidth() {
         val cards = listOf(
             CardEntity(1, "Первая", size = CardSize.WIDE, createdAt = 1, updatedAt = 3, sortOrder = 0, importance = 0),
-            CardEntity(2, "Вторая", size = CardSize.WIDE, createdAt = 2, updatedAt = 2, sortOrder = 1, importance = 100))
+            CardEntity(2, "Вторая", size = CardSize.WIDE, createdAt = 2, updatedAt = 2, sortOrder = 1, importance = 100, progress = 100))
         var state by mutableStateOf(BoardState(cards = cards, loading = false))
         compose.setContent { OnTopTheme {
             Box(Modifier.width(width.dp).fillMaxHeight().testTag("sorting-root")) {
@@ -57,13 +57,13 @@ class BoardSortingUiTest(private val width: Int) {
             assertTrue(first.top < other.top)
         }
         assertFirst(1)
-        for (mode in listOf(BoardSort.IMPORTANCE, BoardSort.CREATED, BoardSort.UPDATED, BoardSort.MANUAL)) {
+        for (mode in listOf(BoardSort.IMPORTANCE, BoardSort.PROGRESS, BoardSort.CREATED, BoardSort.UPDATED, BoardSort.MANUAL)) {
             compose.onNodeWithTag("board-sort").performClick()
             compose.onNodeWithTag("board-sort-${state.sortMode.name}").assertIsSelected()
             BoardSort.entries.forEach { compose.onNodeWithTag("board-sort-${it.name}").assertIsDisplayed() }
             if (mode == BoardSort.IMPORTANCE) capture("menu")
             compose.onNodeWithTag("board-sort-${mode.name}").performClick()
-            assertFirst(if (mode in listOf(BoardSort.IMPORTANCE, BoardSort.CREATED)) 2 else 1)
+            assertFirst(if (mode in listOf(BoardSort.IMPORTANCE, BoardSort.PROGRESS, BoardSort.CREATED)) 2 else 1)
         }
         compose.onNodeWithContentDescription("Сортировка доски: Мой порядок").assertExists()
         val root = compose.onNodeWithTag("sorting-root").fetchSemanticsNode().boundsInRoot

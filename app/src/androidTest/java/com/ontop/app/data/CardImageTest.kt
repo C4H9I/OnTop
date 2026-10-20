@@ -50,7 +50,7 @@ class CardImageTest {
                 old.version = 2
             }
             db = Room.databaseBuilder(context, OnTopDatabase::class.java, name)
-                .addMigrations(OnTopDatabase.MIGRATION_2_3, OnTopDatabase.MIGRATION_3_4, OnTopDatabase.MIGRATION_4_5, OnTopDatabase.MIGRATION_5_6, OnTopDatabase.MIGRATION_6_7, OnTopDatabase.MIGRATION_7_8).build()
+                .addMigrations(OnTopDatabase.MIGRATION_2_3, OnTopDatabase.MIGRATION_3_4, OnTopDatabase.MIGRATION_4_5, OnTopDatabase.MIGRATION_5_6, OnTopDatabase.MIGRATION_6_7, OnTopDatabase.MIGRATION_7_8, OnTopDatabase.MIGRATION_8_9, OnTopDatabase.MIGRATION_9_10, OnTopDatabase.MIGRATION_10_11).build()
             val card = db.cardDao().observeCards().first()
             assertEquals(CardEntity(7, "Мысль", "Текст", CardSize.WIDE, 100, 200, 3), card.single())
             assertEquals(CardCommentEntity(9, 7, "История", 300),

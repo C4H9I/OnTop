@@ -15,7 +15,15 @@ import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
 internal data class BackupData(val cards: List<CardEntity>, val comments: List<CardCommentEntity>,
-    val reminders: List<ReminderEntity>, val tags: List<TagEntity> = emptyList(), val cardTags: List<CardTagCrossRef> = emptyList()) {
+    val reminders: List<ReminderEntity>, val tags: List<TagEntity> = emptyList(), val cardTags: List<CardTagCrossRef> = emptyList(),
+    val interactions: List<NoteInteractionEntity> = emptyList()) {
+    fun withoutTrash(): BackupData {
+        val retained = cards.filter { it.status != CardStatus.TRASHED }
+        val ids = retained.map { it.id }.toSet()
+        return copy(cards = retained, comments = comments.filter { it.cardId in ids },
+            reminders = reminders.filter { it.cardId in ids }, cardTags = cardTags.filter { it.cardId in ids },
+            interactions = interactions.filter { it.noteId in ids })
+    }
     fun paths(): Set<String> = cards.flatMap { card ->
         listOfNotNull(card.imagePath) + RichTextCodec.decode(card.description, card.formatting).imagePaths()
     }.toSet()
@@ -27,7 +35,7 @@ internal data class BackupLimits(val archive: Long = 512L * 1024 * 1024,
 
 /** A logical export, independent of SQLite schema/version and Android filesystem locations. */
 internal object BackupFormat {
-    const val VERSION = 2
+    const val VERSION = 5
     private val imageName = Regex("images/[a-f0-9-]{1,64}\\.jpg")
     fun validPath(path: String): Boolean = imageName.matches(path)
     private fun JSONObject.required(name: String): Any { require(has(name)); return get(name) }
@@ -99,11 +107,16 @@ internal object BackupFormat {
         return RichDocument(text, ranges, media).normalized()
     }
 
-    fun encode(data: BackupData, includeTags: Boolean = true): ByteArray = JSONObject().put("cards", JSONArray().apply {
+    fun encode(data: BackupData, includeTags: Boolean = true, includeStatus: Boolean = true,
+        includeProgress: Boolean = true, includeInteractions: Boolean = true): ByteArray = JSONObject().put("cards", JSONArray().apply {
         data.cards.sortedBy { it.id }.forEach { c -> put(JSONObject().put("id", c.id).put("title", c.title)
             .put("description", c.description).put("size", c.size.name).put("createdAt", c.createdAt)
             .put("updatedAt", c.updatedAt).put("sortOrder", c.sortOrder).put("importance", c.importance)
-            .nullable("imagePath", c.imagePath).nullable("formatting", c.formatting)) }
+            .nullable("imagePath", c.imagePath).nullable("formatting", c.formatting)
+            .apply {
+                if (includeStatus) put("status", c.status.name)
+                if (includeProgress) nullable("progress", c.progress)
+            }) }
     }).put("comments", JSONArray().apply {
         data.comments.sortedBy { it.id }.forEach { c -> put(JSONObject().put("id", c.id).put("cardId", c.cardId)
             .put("text", c.text).put("createdAt", c.createdAt)) }
@@ -115,6 +128,10 @@ internal object BackupFormat {
             .put("intervalHours", r.intervalHours).put("windowStart", r.windowStart).put("windowEnd", r.windowEnd)
             .nullable("quietStart", r.quietStart).nullable("quietEnd", r.quietEnd).nullable("pausedUntil", r.pausedUntil)) }
     }).apply {
+        if (includeInteractions) put("interactions", JSONArray().apply {
+            data.interactions.sortedBy { it.id }.forEach { event -> put(JSONObject().put("id", event.id)
+                .put("noteId", event.noteId).put("eventType", event.eventType).put("timestamp", event.timestamp)) }
+        })
         if (includeTags) {
             put("tags", JSONArray().apply { data.tags.sortedBy { it.id }.forEach {
                 put(JSONObject().put("id", it.id).put("name", it.name).put("createdAt", it.createdAt))
@@ -125,7 +142,8 @@ internal object BackupFormat {
         }
     }.toString().toByteArray(Charsets.UTF_8)
 
-    fun decode(bytes: ByteArray, requireTags: Boolean = false): BackupData {
+    fun decode(bytes: ByteArray, requireTags: Boolean = false, requireStatus: Boolean = false,
+        requireProgress: Boolean = false, requireInteractions: Boolean = false): BackupData {
         val root = objectFrom(bytes.toString(Charsets.UTF_8))
         require(root.has("tags") == root.has("cardTags"))
         if (requireTags) require(root.has("tags"))
@@ -133,7 +151,11 @@ internal object BackupFormat {
             CardEntity(c.id("id"), c.string("title", 10_000).also { require(it.isNotBlank()) }, c.string("description"),
                 CardSize.valueOf(c.string("size", 20)), c.time("createdAt"), c.time("updatedAt"), c.number("sortOrder"),
                 c.nullString("imagePath", 100)?.also { require(validPath(it)) }, c.nullString("formatting"),
-                if (c.has("importance")) c.int("importance").also { require(it in 0..100) } else 50)
+                if (c.has("importance")) c.int("importance").also { require(it in 0..100) } else 50,
+                if (c.has("status")) CardStatus.valueOf(c.string("status", 20)) else {
+                    require(!requireStatus); CardStatus.ACTIVE
+                }, if (c.has("progress") && !c.isNull("progress")) c.int("progress").also { require(it in 0..100) }
+                    else { require(!requireProgress || c.has("progress")); null })
                 .also { document(it.description, it.formatting) }
         }
         val comments = root.list("comments", 100_000).map { c ->
@@ -161,12 +183,20 @@ internal object BackupFormat {
         val tagIds = tags.map { it.id }.toSet()
         require(tagIds.size == tags.size && tags.map { it.normalizedName }.toSet().size == tags.size)
         require(links.toSet().size == links.size && links.all { it.cardId in ids && it.tagId in tagIds })
-        return BackupData(cards, comments, reminders, tags, links)
+        if (requireInteractions) require(root.has("interactions"))
+        val interactions = if (root.has("interactions")) root.list("interactions", 1_000_000).map {
+            NoteInteractionEntity(it.id("id"), it.id("noteId"),
+                NoteInteractionType.valueOf(it.string("eventType", 40)).name, it.time("timestamp"))
+        } else emptyList()
+        require(interactions.map { it.id }.toSet().size == interactions.size)
+        require(interactions.all { it.noteId in ids })
+        return BackupData(cards, comments, reminders, tags, links, interactions)
     }
 
     fun digest(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-    fun fingerprint(data: BackupData, includeTags: Boolean = true): String = digest(encode(data.copy(
-        reminders = data.reminders.map { it.copy(nextAt = null, snoozeAt = null) }), includeTags))
+    fun fingerprint(data: BackupData, includeTags: Boolean = true, includeStatus: Boolean = true,
+        includeProgress: Boolean = true, includeInteractions: Boolean = true): String = digest(encode(data.copy(
+        reminders = data.reminders.map { it.copy(nextAt = null, snoozeAt = null) }), includeTags, includeStatus, includeProgress, includeInteractions))
 
     /** Enforce limits against actual bytes read; ZIP metadata is untrusted. */
     fun copy(input: InputStream, output: OutputStream, limit: Long): Long {
@@ -179,7 +209,8 @@ internal object BackupFormat {
         return total
     }
 
-    fun write(data: BackupData, image: (String) -> File, output: OutputStream, limits: BackupLimits = BackupLimits()) {
+    fun write(source: BackupData, image: (String) -> File, output: OutputStream, limits: BackupLimits = BackupLimits()) {
+        val data = source.withoutTrash()
         val bytes = encode(data); require(bytes.size <= limits.json)
         decode(bytes) // Never produce a backup that this version cannot read.
         val paths = data.paths().sorted(); require(paths.size + 2 <= limits.entries)
@@ -254,7 +285,8 @@ internal object BackupFormat {
             val hash = file.string("sha256", 64); require(Regex("[a-f0-9]{64}").matches(hash))
             require(actual.first == file.number("bytes") && actual.second == hash) { "Контрольная сумма не совпадает." }
         }
-        val data = decode(File(target, "data.json").readBytes(), requireTags = archiveVersion >= 2)
+        val data = decode(File(target, "data.json").readBytes(), requireTags = archiveVersion >= 2,
+            requireStatus = archiveVersion >= 3, requireProgress = archiveVersion >= 4, requireInteractions = archiveVersion >= 5)
         require(data.paths() == extracted.keys - setOf("manifest.json", "data.json")) { "В архиве отсутствуют изображения или есть лишние файлы." }
         data.paths().forEach { path -> checkImage(File(target, path)) }
         return data

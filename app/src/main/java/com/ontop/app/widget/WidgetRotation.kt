@@ -32,7 +32,7 @@ internal object WidgetRotation {
             val store = WidgetSelectionStore(context)
             val previous = store.selection(id)
             val chosen = if (mode == WidgetMode.FIXED) {
-                require(cardId != null && db.cardDao().findById(cardId) != null); cardId
+                require(cardId != null && db.cardDao().findById(cardId)?.status == com.ontop.app.data.CardStatus.ACTIVE); cardId
             } else previous.currentId.takeIf { previous.mode == WidgetMode.ROTATION }
             store.save(id, WidgetSelection(mode, if (mode == WidgetMode.FIXED) chosen else null,
                 currentId = if (mode == WidgetMode.ROTATION) chosen else null,

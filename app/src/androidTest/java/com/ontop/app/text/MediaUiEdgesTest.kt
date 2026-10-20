@@ -70,9 +70,12 @@ class MediaUiEdgesTest {
             compose.waitUntil(5_000) { compose.onAllNodesWithTag("card-editor").fetchSemanticsNodes().isEmpty() }
             val card = db.cardDao().observeCards().first().single()
             val document = RichTextCodec.decode(card.description, card.formatting)
-            assertEquals("left\n right", card.description)
+            assertEquals("left right", card.description)
             assertTrue(document.has(RichKind.BOLD, 0, 4))
-            assertTrue(document.has(RichKind.BOLD, 5, 11))
+            assertTrue(document.has(RichKind.BOLD, 4, 10))
+            val linked = document.videoToLink(document.media.single().id)
+            assertEquals("left\n${url} right", linked.text)
+            assertEquals(url, youtubeLinks(linked.text).single().video.source)
             assertEquals(42, document.media.single().video!!.seconds)
         } finally { model.viewModelScope.cancel(); db.close() }
     }

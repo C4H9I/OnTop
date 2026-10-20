@@ -73,7 +73,11 @@ class BackupTest {
             val tags = listOf(TagEntity(1, "Работа", createdAt = 100), TagEntity(2, "Личные мысли", createdAt = 101))
             val links = listOf(CardTagCrossRef(1, 1), CardTagCrossRef(1, 2), CardTagCrossRef(2, 2))
             tags.forEach { db.tagDao().insert(it) }; links.forEach { db.tagDao().insertLink(it) }
-            return BackupData(cards, comments, rules, tags, links)
+            val events = NoteInteractionType.entries.mapIndexed { index, type ->
+                NoteInteractionEntity(index + 1L, 1, type.name, 400 + index.toLong())
+            } + NoteInteractionEntity(6, 2, "NOTE_OPENED", 500)
+            events.forEach { db.noteInteractionDao().insert(it) }
+            return BackupData(cards, comments, rules, tags, links, events)
         }
         suspend fun old(): BackupData {
             db.cardDao().deleteAll()
@@ -98,6 +102,122 @@ class BackupTest {
     }
     private class ProcessDeath : Error()
 
+    @Test fun nullableProgressRoundTripsWithAllDataAndOlderDocumentsDefaultToNull() = runBlocking {
+        Fixture().use { f ->
+            val original = f.source()
+            val values = listOf<Int?>(null, 0, 50, 100)
+            val cards = values.mapIndexed { index, progress ->
+                (original.cards.getOrNull(index) ?: original.cards[1].copy(id = index + 1L))
+                    .copy(progress = progress, importance = index * 25,
+                        status = if (index == 0) CardStatus.ARCHIVED else CardStatus.ACTIVE)
+            }
+            val data = original.copy(cards = cards)
+            val json = JSONObject(BackupFormat.encode(data).toString(Charsets.UTF_8))
+            assertTrue(json.getJSONArray("cards").getJSONObject(0).isNull("progress"))
+            assertEquals(data, BackupFormat.decode(BackupFormat.encode(data)))
+            val old = JSONObject(json.toString())
+            repeat(values.size) { old.getJSONArray("cards").getJSONObject(it).remove("progress") }
+            assertTrue(BackupFormat.decode(old.toString().toByteArray()).cards.all { it.progress == null })
+            for (invalid in listOf(-1, 101, 1.5, "50", true)) {
+                val broken = JSONObject(json.toString())
+                broken.getJSONArray("cards").getJSONObject(0).put("progress", invalid)
+                assertThrows(IllegalArgumentException::class.java) { BackupFormat.decode(broken.toString().toByteArray()) }
+            }
+            val archive = f.archive(data)
+            f.old()
+            val manager = f.manager()
+            manager.prepare { archive.inputStream() }; manager.restore()
+            assertNull(manager.state.value.error)
+            val restored = manager.snapshot()
+            assertEquals(values, restored.cards.sortedBy { it.id }.map { it.progress })
+            assertEquals(cards.map { it.importance }, restored.cards.sortedBy { it.id }.map { it.importance })
+            assertEquals(original.comments, restored.comments)
+            assertEquals(original.tags, restored.tags)
+            assertEquals(original.cardTags, restored.cardTags)
+            assertEquals(original.interactions, restored.interactions)
+            assertEquals(CardStatus.ARCHIVED, restored.cards.first { it.id == 1L }.status)
+            val document = BackupFormat.document(restored.cards[0].description, restored.cards[0].formatting)
+            assertEquals(3, document.media.size)
+            document.imagePaths().forEach { assertTrue(CardImageStore(f.app).resolve(it).exists()) }
+        }
+    }
+
+    @Test fun journalsFromBeforeStatusFieldRecoverAfterUpgradeWithoutDeletingCommittedMedia() = runBlocking {
+        for (version in listOf(1, 2, 3, 4)) Fixture(fileBacked = true).use { f ->
+            val source = f.source(); val archive = f.archive(source); val old = f.old()
+            val manager = f.manager { if (it == "committed") throw ProcessDeath() }
+            manager.prepare { archive.inputStream() }
+            try { manager.restore(); fail("Expected interruption") } catch (_: ProcessDeath) { }
+            val current = manager.snapshot()
+            val journal = File(f.root, "restore.json")
+            val record = JSONObject(journal.readText())
+            record.put("fingerprintVersion", version).put("fingerprint",
+                BackupFormat.fingerprint(current, includeTags = version >= 2, includeStatus = version >= 3, includeProgress = version >= 4, includeInteractions = false))
+            journal.writeText(record.toString())
+            f.reopen()
+            val restarted = f.manager(); restarted.recover()
+            assertNull(restarted.state.value.error)
+            assertEquals(current.cards, restarted.snapshot().cards)
+            current.paths().forEach { assertTrue(CardImageStore(f.app).resolve(it).exists()) }
+            assertFalse(CardImageStore(f.app).resolve(old.cards.single().imagePath!!).exists())
+            assertFalse(journal.exists())
+            assertEquals(1, f.delivery.alarms.size)
+        }
+    }
+
+    @Test fun archiveStatusRoundTripExcludesTrashAndItsRelationsAndRestoresOldArchivesAsActive() = runBlocking {
+        Fixture().use { f ->
+            val source = f.source()
+            f.db.cardDao().update(source.cards[0].copy(status = CardStatus.ARCHIVED))
+            f.db.cardDao().update(source.cards[1].copy(status = CardStatus.TRASHED))
+            val before = f.manager().snapshot()
+            val archive = f.archive(before)
+            val oldJson = JSONObject(BackupFormat.encode(source).toString(Charsets.UTF_8))
+            val oldCards = oldJson.getJSONArray("cards")
+            repeat(oldCards.length()) { oldCards.getJSONObject(it).remove("status") }
+            assertTrue(BackupFormat.decode(oldJson.toString().toByteArray()).cards.all { it.status == CardStatus.ACTIVE })
+            f.old()
+            val manager = f.manager()
+            manager.prepare { archive.inputStream() }; manager.restore()
+            assertNull(manager.state.value.error)
+            val restored = manager.snapshot()
+            assertEquals(1, restored.cards.size)
+            assertEquals(CardStatus.ARCHIVED, restored.cards.single().status)
+            assertTrue(restored.comments.all { it.cardId == 1L })
+            assertTrue(restored.reminders.all { it.cardId == 1L })
+            assertTrue(restored.cardTags.all { it.cardId == 1L })
+            assertTrue(f.delivery.alarms.isEmpty())
+            assertTrue(restored.reminders.single().enabled)
+            assertNull(restored.reminders.single().nextAt)
+        }
+    }
+
+    @Test fun convertedVideosAndInlineOnlyImagesRestoreWithoutCreatingCover() = runBlocking {
+        Fixture().use { f ->
+            val source = f.source()
+            val url = "https://youtube.com/live/M7lc1UVf-VE?si=original&t=12s"
+            val text = "До 🧠\n$url\nПосле"
+            val image = source.cards.first().imagePath!!
+            val document = RichDocument(text, media = listOf(NoteMedia("shared-image", text.length,
+                MediaKind.IMAGE, path = image))).convertYouTubeLinks()
+            f.db.cardDao().update(source.cards.first().copy(imagePath = null, description = document.text,
+                formatting = RichTextCodec.encode(document)))
+            val archive = f.archive(f.manager().snapshot())
+            f.old()
+            val manager = f.manager()
+            manager.prepare { archive.inputStream() }; manager.restore()
+            assertNull(manager.state.value.error)
+            val card = manager.snapshot().cards.single { it.id == 1L }
+            assertNull(card.imagePath)
+            val restored = RichTextCodec.decode(card.description, card.formatting)
+            assertEquals(listOf(MediaKind.YOUTUBE, MediaKind.IMAGE), restored.media.map { it.kind })
+            assertEquals(url, restored.media.first().video!!.source)
+            assertEquals(text, restored.videoToLink(restored.media.first().id).text)
+            assertArrayEquals(CardImageStore(f.app).resolve(image).readBytes(),
+                CardImageStore(f.app).resolve(restored.imagePaths().single()).readBytes())
+        }
+    }
+
     @Test fun portableRoundTripRestoresDocumentsCommentsImagesAndAdvancedRules() = runBlocking {
         Fixture().use { f ->
             val source = f.source(); val archive = f.archive(source)
@@ -112,6 +232,7 @@ class BackupTest {
             assertEquals(source.comments, restored.comments)
             assertEquals(source.tags, restored.tags)
             assertEquals(source.cardTags, restored.cardTags)
+            assertEquals(source.interactions, restored.interactions)
             source.cards.forEach { original ->
                 val card = restored.cards.single { it.id == original.id }
                 assertEquals(original, card.copy(imagePath = original.imagePath, formatting = original.formatting))
@@ -313,6 +434,30 @@ class BackupTest {
                 val after = com.ontop.app.widget.CardWidget().load(f.app, 1234, f.db, selections)
                 assertNull(after.cardId); assertEquals("Выберите карточку", after.title)
             } finally { f.app.deleteSharedPreferences(name) }
+        }
+    }
+
+    @Test fun legacyVersionFourHasNoSyntheticHistoryAndInvalidHistoryCannotReplaceData() = runBlocking {
+        Fixture().use { f ->
+            val source = f.source()
+            val files = unzip(f.archive(source)).toMutableMap()
+            val data = JSONObject(files.getValue("data.json").toString(Charsets.UTF_8)).apply { remove("interactions") }
+            files["manifest.json"] = JSONObject(files.getValue("manifest.json").toString(Charsets.UTF_8))
+                .put("version", 4).toString().toByteArray()
+            val archive = withData(files, data.toString().toByteArray())
+            f.old()
+            val manager = f.manager()
+            manager.prepare { archive.inputStream() }; manager.restore()
+            assertNull(manager.state.value.error)
+            assertTrue(manager.snapshot().interactions.isEmpty())
+            val before = manager.snapshot()
+            val malformed = JSONObject(BackupFormat.encode(source).toString(Charsets.UTF_8))
+            malformed.getJSONArray("interactions").getJSONObject(0).put("noteId", 99999)
+            val invalid = withData(unzip(f.archive(source)), malformed.toString().toByteArray())
+            manager.prepare { invalid.inputStream() }
+            assertNotNull(manager.state.value.error)
+            assertEquals(before, manager.snapshot())
+            assertTrue(BackupFormat.decode(BackupFormat.encode(source, includeInteractions = false)).interactions.isEmpty())
         }
     }
 

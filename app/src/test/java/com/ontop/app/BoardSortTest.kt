@@ -50,4 +50,13 @@ class BoardSortTest {
         session.order = NoteSliderOrder.BOARD
         assertEquals(ids(BoardSort.MANUAL), session.ordered(cards).map { it.id })
     }
+
+    @Test fun progressSortKeepsNullSeparateFromZeroAndStableTiesWithoutMutatingManualOrder() {
+        val input = cards.map { it.copy(progress = when (it.id) { 1L -> null; 4L -> 0; else -> 100 }) }
+        assertEquals(listOf(2L, 3L, 4L, 1L), sortedBoardCards(input, BoardSort.PROGRESS).map { it.id })
+        val edited = input.map { if (it.id == 1L) it.copy(progress = 100) else it }
+        assertEquals(listOf(1L, 2L, 3L, 4L), sortedBoardCards(edited, BoardSort.PROGRESS).map { it.id })
+        assertEquals(listOf(1L, 2L, 3L, 4L), sortedBoardCards(input, BoardSort.MANUAL).map { it.id })
+        assertNull(input.single { it.id == 1L }.progress)
+    }
 }

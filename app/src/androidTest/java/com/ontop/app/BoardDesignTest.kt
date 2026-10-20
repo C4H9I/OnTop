@@ -21,6 +21,7 @@ import com.ontop.app.data.CardEntity
 import com.ontop.app.data.CardImageStore
 import com.ontop.app.data.CardSize
 import com.ontop.app.ui.theme.OnTopTheme
+import com.ontop.app.text.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Rule
@@ -76,7 +77,9 @@ class BoardDesignTest(private val width: Int, private val fontScale: Float) {
 
     @Test fun mosaicKeepsOrderSpansAndScrollsThroughTwoHundredCards() {
         val cards = listOf(card(1, "Замечай хорошее"), card(2, "Дыши. Не спеши. Дай себе немного времени."),
-            card(3, "Важное рядом", CardSize.WIDE)) + (4L..200).map {
+            card(3, "Важное рядом", CardSize.WIDE).copy(formatting = RichTextCodec.encode(
+                RichDocument(media = listOf(NoteMedia(offset = 0, kind = MediaKind.YOUTUBE,
+                    video = YouTubeLink.parse("https://youtu.be/M7lc1UVf-VE"))))))) + (4L..200).map {
             card(it, "Мысль $it", if (it % 7 == 0L) CardSize.WIDE else CardSize.NORMAL)
         }
         var opened: Long? = null
@@ -95,6 +98,14 @@ class BoardDesignTest(private val width: Int, private val fontScale: Float) {
             assertTrue(second.top >= first.bottom)
         }
         assertTrue(wide.top >= maxOf(first.bottom, second.bottom))
+        for (id in 1L..3L) {
+            val tile = compose.onNodeWithTag("card-$id").fetchSemanticsNode().boundsInRoot
+            val visual = compose.onNodeWithTag("tile-visual-$id", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val badge = compose.onNodeWithTag("tile-status-$id", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertEquals(tile.top, visual.top, 1f)
+            assertEquals(tile.height, visual.height, 1f)
+            assertTrue(badge.top >= visual.top && badge.right <= visual.right)
+        }
         assertTitleFits(cards[0].title)
         assertTitleFits(cards[1].title)
         saveScreenshot("mosaic")
@@ -127,8 +138,17 @@ class BoardDesignTest(private val width: Int, private val fontScale: Float) {
                 card(2, "Продолжай свой путь", image = "images/0000.jpg")))
             assertTitleFits("Сохраняй внимание")
             assertTitleFits("Продолжай свой путь")
+            val indicator = compose.onNodeWithTag("tile-status-1", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val visual = compose.onNodeWithTag("tile-visual-1", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val tileBounds = compose.onNodeWithTag("card-1").fetchSemanticsNode().boundsInRoot
+            val inset = 8 * context.resources.displayMetrics.density
+            assertEquals("Photo starts at the tile top", tileBounds.top, visual.top, 1f)
+            assertEquals("No extra indicator row", tileBounds.height, visual.height, 1f)
+            assertEquals("Top inset", visual.top + inset, indicator.top, 1f)
+            assertEquals("Right inset", visual.right - inset, indicator.right, 1f)
+            assertTrue("Indicator overlays the photograph", indicator.bottom < visual.bottom)
             compose.waitUntil(timeoutMillis = 5_000) {
-                val photo = compose.onNodeWithTag("card-1").captureToImage().asAndroidBitmap()
+                val photo = compose.onNodeWithTag("tile-visual-1", useUnmergedTree = true).captureToImage().asAndroidBitmap()
                 val top = photo.getPixel(photo.width / 2, 30)
                 AndroidColor.red(top) > 245 && AndroidColor.green(top) > 245
             }

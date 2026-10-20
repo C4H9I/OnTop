@@ -35,7 +35,7 @@ class RichTextMigrationTest {
                 old.execSQL("INSERT INTO reminders(id, cardId, hour, minute, enabled, createdAt, updatedAt, nextAt, snoozeAt, daysMask, times, quietStart, quietEnd) VALUES (11,7,9,0,1,400,500,600,700,21,'540,1080',1320,480)")
                 old.version = 5
             }
-            db = Room.databaseBuilder(context, OnTopDatabase::class.java, name).addMigrations(OnTopDatabase.MIGRATION_5_6, OnTopDatabase.MIGRATION_6_7, OnTopDatabase.MIGRATION_7_8).build()
+            db = Room.databaseBuilder(context, OnTopDatabase::class.java, name).addMigrations(OnTopDatabase.MIGRATION_5_6, OnTopDatabase.MIGRATION_6_7, OnTopDatabase.MIGRATION_7_8, OnTopDatabase.MIGRATION_8_9, OnTopDatabase.MIGRATION_9_10, OnTopDatabase.MIGRATION_10_11).build()
             val oldCard = db.cardDao().findById(7)!!
             assertEquals(plain, oldCard.description)
             assertNull(oldCard.formatting)

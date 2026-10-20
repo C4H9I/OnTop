@@ -13,6 +13,19 @@ import java.util.zip.*
 class TagBackupTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val card = CardEntity(1, "Заметка", createdAt = 10, updatedAt = 20, sortOrder = 0)
+    @Test fun versionThreeArchiveWithoutProgressRestoresNull() = runBlocking<Unit> {
+        val db = Room.inMemoryDatabaseBuilder(context, OnTopDatabase::class.java).build()
+        val root = File(context.cacheDir, "progress-legacy-${System.nanoTime()}")
+        val manager = BackupManager(context, db, root = root, refreshWidgets = {})
+        try {
+            db.cardDao().insert(card.copy(progress = 75))
+            val data = BackupData(listOf(card), emptyList(), emptyList())
+            val bytes = archive(BackupFormat.encode(data, includeProgress = false), 3)
+            manager.prepare { bytes.inputStream() }; manager.restore()
+            assertNull(manager.state.value.error)
+            assertEquals(card, db.cardDao().findById(1))
+        } finally { manager.recover(); manager.discardPrepared(); db.close(); root.deleteRecursively() }
+    }
     private fun archive(data: ByteArray, version: Int): ByteArray {
         val manifest = JSONObject().put("format", "OnTop").put("version", version).put("createdAt", 1)
             .put("files", JSONArray().put(JSONObject().put("path", "data.json").put("bytes", data.size).put("sha256", BackupFormat.digest(data))))
@@ -83,7 +96,7 @@ class TagBackupTest {
             val journal = File(root, "restore.json")
             val record = JSONObject(journal.readText()).apply {
                 remove("fingerprintVersion")
-                put("fingerprint", BackupFormat.fingerprint(manager.snapshot(), includeTags = false))
+                put("fingerprint", BackupFormat.fingerprint(manager.snapshot(), includeTags = false, includeStatus = false, includeProgress = false, includeInteractions = false))
             }
             journal.writeText(record.toString())
             manager.recover()

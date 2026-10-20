@@ -2,6 +2,7 @@ package com.ontop.app.reminders
 
 import android.content.Context
 import com.ontop.app.data.CardEntity
+import com.ontop.app.data.CardStatus
 import com.ontop.app.data.OnTopDatabase
 import com.ontop.app.data.ReminderEntity
 import androidx.room.withTransaction
@@ -70,14 +71,15 @@ internal class ReminderManager(
             mode = schedule.mode.name, daysMask = schedule.daysMask, times = schedule.times.sorted().joinToString(","),
             intervalHours = schedule.intervalHours, windowStart = schedule.windowStart, windowEnd = schedule.windowEnd,
             quietStart = schedule.quietStart, quietEnd = schedule.quietEnd, pausedUntil = draft.pausedUntil)
-        rule = rule.copy(nextAt = if (rule.enabled) next(time, rule) else null)
+        rule = rule.copy(nextAt = if (rule.enabled && isActive(cardId)) next(time, rule) else null)
         if (old == null) rule = rule.copy(id = dao.insert(rule)) else check(dao.update(rule) == 1)
         return rule
     }
 
     /** Lock before the Room transaction, just like receivers: no inverted lock order. */
     suspend fun saveNote(card: CardEntity, isNew: Boolean, reminder: ReminderDraft?, reminderChanged: Boolean,
-        tagIds: List<Long>? = null, newTagNames: List<String> = emptyList()): Long =
+        tagIds: List<Long>? = null, newTagNames: List<String> = emptyList(),
+        onSaved: suspend (Long) -> Unit = {}): Long =
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 val previous = if (isNew) null else dao.forCard(card.id)
@@ -94,6 +96,7 @@ internal class ReminderManager(
                             delivery.cancel(planned!!.id)
                             arm(planned!!)
                         }
+                        onSaved(id)
                         id
                     }
                 } catch (error: Exception) {
@@ -122,12 +125,29 @@ internal class ReminderManager(
         mutex.withLock {
             // Cancel the OS alarms explicitly before the FK removes the rule.
             dao.forCard(card.id)?.let { rule ->
-                check(dao.update(rule.copy(enabled = false, nextAt = null, snoozeAt = null)) == 1)
                 delivery.cancel(rule.id)
             }
             check(db.cardDao().delete(card) == 1)
         }
     }
+
+    suspend fun changeStatus(cardId: Long, status: CardStatus) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            var planned: ReminderEntity? = null
+            db.withTransaction {
+                val card = db.cardDao().findById(cardId) ?: error("Заметка недоступна")
+                check(db.cardDao().update(card.copy(status = status, updatedAt = now())) == 1)
+                dao.forCard(cardId)?.let { rule ->
+                    planned = rule.copy(nextAt = if (status == CardStatus.ACTIVE && rule.enabled) next(now(), rule) else null,
+                        snoozeAt = null)
+                    check(dao.update(planned!!) == 1)
+                }
+            }
+            planned?.let { delivery.cancel(it.id); arm(it) }
+        }
+    }
+
+    private suspend fun isActive(cardId: Long) = db.cardDao().findById(cardId)?.status == CardStatus.ACTIVE
 
     suspend fun restore(rebase: Boolean = false) = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -137,6 +157,11 @@ internal class ReminderManager(
 
     private suspend fun restoreLocked(rebase: Boolean) {
         for (old in dao.all()) {
+            if (!isActive(old.cardId)) {
+                check(dao.update(old.copy(nextAt = null, snoozeAt = null)) == 1)
+                delivery.cancel(old.id)
+                continue
+            }
             val time = now()
             val today = Instant.ofEpochMilli(time).atZone(zone()).toLocalDate()
             // Preserve a pending inexact alarm from today, only if still a valid slot.
@@ -158,7 +183,7 @@ internal class ReminderManager(
     suspend fun fire(id: Long, snooze: Boolean, expectedAt: Long) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val rule = dao.get(id) ?: return@withLock
-            if (!rule.enabled || expectedAt != (if (snooze) rule.snoozeAt else rule.nextAt)) return@withLock
+            if (!rule.enabled || !isActive(rule.cardId) || expectedAt != (if (snooze) rule.snoozeAt else rule.nextAt)) return@withLock
             if (expectedAt > now()) { arm(rule); return@withLock }
             val time = now()
             val card = db.cardDao().findById(rule.cardId) ?: return@withLock
@@ -177,6 +202,7 @@ internal class ReminderManager(
     suspend fun snooze(id: Long) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val rule = dao.get(id)?.takeIf { it.enabled } ?: return@withLock
+            if (!isActive(rule.cardId)) return@withLock
             if (isPaused(rule, now())) return@withLock
             val updated = rule.copy(snoozeAt = now() + 10 * 60_000L)
             check(dao.update(updated) == 1)
@@ -190,8 +216,8 @@ internal class ReminderManager(
         Instant.ofEpochMilli(time), zone(), rule.schedule(), rule.pausedUntil?.let(Instant::ofEpochMilli)
     )?.toEpochMilli()
 
-    private fun arm(rule: ReminderEntity) {
-        if (!rule.enabled) return
+    private suspend fun arm(rule: ReminderEntity) {
+        if (!rule.enabled || !isActive(rule.cardId)) return
         rule.nextAt?.let { delivery.schedule(rule.id, false, it) }
         rule.snoozeAt?.let { delivery.schedule(rule.id, true, it) }
     }

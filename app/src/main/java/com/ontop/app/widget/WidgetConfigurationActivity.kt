@@ -145,7 +145,7 @@ class WidgetConfigurationActivity : ComponentActivity() {
                                     lifecycleScope.launch {
                                         try {
                                             val exists = withContext(Dispatchers.IO) {
-                                                OnTopDatabase.getInstance(this@WidgetConfigurationActivity).cardDao().findById(card.id) != null
+                                                OnTopDatabase.getInstance(this@WidgetConfigurationActivity).cardDao().findById(card.id)?.status == com.ontop.app.data.CardStatus.ACTIVE
                                             }
                                             check(exists)
                                             WidgetRotation.configure(this@WidgetConfigurationActivity, widgetId, WidgetMode.FIXED, card.id)

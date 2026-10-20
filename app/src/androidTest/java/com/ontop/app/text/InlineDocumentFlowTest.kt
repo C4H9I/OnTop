@@ -43,7 +43,12 @@ class InlineDocumentFlowTest {
             (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
         return WindowInspector.getGlobalWindowViews().flatMap(::descendants).filterIsInstance<NoteEditText>()
     }
-    private fun typeInFocusedFragment(text: String) {
+    private fun typeInFocusedFragment(text: String, awaitTrailingFocus: Boolean = false) {
+        if (awaitTrailingFocus) compose.waitUntil(5_000) {
+            var ready = false
+            compose.runOnIdle { ready = editors().lastOrNull { it.isShown }?.hasFocus() == true }
+            ready
+        }
         compose.waitForIdle()
         compose.runOnIdle { assertEquals(1, editors().count { it.hasFocus() }) }
         // Do not explicitly select the trailing field: production must put the cursor there.
@@ -114,14 +119,33 @@ class InlineDocumentFlowTest {
             compose.runOnIdle {
                 assertTrue("Original field must shrink after first insertion", editors().all { it.minLines == 1 })
             }
-            typeInFocusedFragment("Текст 2")
+            typeInFocusedFragment("Текст 2", awaitTrailingFocus = true)
             action("Вставить изображение")
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Текст после").fetchSemanticsNodes().size == 2 }
-            typeInFocusedFragment("Текст 3")
+            typeInFocusedFragment("Текст 3", awaitTrailingFocus = true)
+            fun clipboardRoundTrip(expected: String) {
+                compose.runOnIdle {
+                    val editor = editors().single { it.hasFocus() }
+                    editor.setSelection(0, editor.text.length)
+                }
+                action("Копировать")
+                compose.runOnIdle {
+                    val clipboard = app.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    assertEquals(expected, clipboard.primaryClip!!.getItemAt(0).text.toString())
+                }
+                action("Вставить")
+                compose.runOnIdle {
+                    val editor = editors().single { it.hasFocus() }
+                    assertEquals(expected, editor.text.toString())
+                    assertEquals(expected.length, editor.selectionStart)
+                }
+            }
+            clipboardRoundTrip("Текст 3")
             action("Вставить видео")
             compose.onNodeWithText("Ссылка YouTube").performTextInput("https://youtu.be/M7lc1UVf-VE?t=12")
             compose.onNodeWithText("Вставить видео").performClick()
-            typeInFocusedFragment("Текст 4")
+            typeInFocusedFragment("Текст 4", awaitTrailingFocus = true)
+            clipboardRoundTrip("Текст 4")
             screenshot("sequence-editor")
             compose.waitForIdle()
             restoration.emulateSavedInstanceStateRestore()
@@ -138,7 +162,7 @@ class InlineDocumentFlowTest {
             assertViewOrder("reflection-list", document)
             screenshot("sequence-view")
             compose.onNodeWithContentDescription("Закрыть карточку").performClick()
-            compose.onNodeWithText("Просмотр →").performClick()
+            compose.onNodeWithContentDescription("Просмотр заметок").performClick()
             assertViewOrder("note-slider", document)
             compose.onNodeWithText("Редактировать").performClick()
             val imageA = document.media[0].id

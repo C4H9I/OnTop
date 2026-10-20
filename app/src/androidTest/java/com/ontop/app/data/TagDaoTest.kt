@@ -95,7 +95,7 @@ class TagDaoTest {
                 old.execSQL("INSERT INTO card_comments VALUES (9,7,'Комментарий',30)")
                 old.version = 7
             }
-            db = Room.databaseBuilder(context, OnTopDatabase::class.java, name).addMigrations(OnTopDatabase.MIGRATION_7_8).build()
+            db = Room.databaseBuilder(context, OnTopDatabase::class.java, name).addMigrations(OnTopDatabase.MIGRATION_7_8, OnTopDatabase.MIGRATION_8_9, OnTopDatabase.MIGRATION_9_10, OnTopDatabase.MIGRATION_10_11).build()
             assertEquals(CardEntity(7, "Прежняя", "Текст", CardSize.WIDE, 10, 20, 3, importance = 75), db.cardDao().findById(7))
             assertEquals("Комментарий", db.cardCommentDao().all().single().text)
             assertTrue(db.tagDao().all().isEmpty())

@@ -6,6 +6,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
+import com.ontop.app.R
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -35,6 +37,14 @@ internal fun RichFormatToolbar(document: RichDocument, controller: NativeRichCon
                 colors = ButtonDefaults.textButtonColors(containerColor = if (active) MaterialTheme.colorScheme.secondaryContainer else androidx.compose.ui.graphics.Color.Transparent)) {
                 Text(symbol, style = style)
             }
+        }
+        IconButton(onClick = controller::copySelection, enabled = enabled && selection,
+            modifier = Modifier.focusProperties { canFocus = false }) {
+            Icon(painterResource(R.drawable.ic_copy), "Копировать")
+        }
+        IconButton(onClick = controller::pastePlainText, enabled = enabled,
+            modifier = Modifier.focusProperties { canFocus = false }) {
+            Icon(painterResource(R.drawable.ic_paste), "Вставить")
         }
         Action("Жирный", "B", RichKind.BOLD, LocalTextStyle.current.copy(fontWeight = FontWeight.Bold))
         Action("Курсив", "I", RichKind.ITALIC, LocalTextStyle.current.copy(fontStyle = FontStyle.Italic))

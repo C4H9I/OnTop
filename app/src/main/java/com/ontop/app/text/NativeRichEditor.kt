@@ -64,6 +64,13 @@ internal class NativeRichController {
     var onYouTubePaste: (String, Int, Int) -> Unit = { _, _, _ -> }
     private var internalChange = false
     private var dark = false
+    private var lastParentDocument: RichDocument? = null
+    private var pendingNativeEdit = false
+
+    private fun publishDocument() {
+        pendingNativeEdit = true
+        onDocument(document)
+    }
 
     fun attach(editor: NoteEditText) {
         view = editor
@@ -84,7 +91,7 @@ internal class NativeRichController {
                 val inserted = s.subSequence(from, from + added).toString()
                 document = previous.replace(from, from + removed, inserted)
                 applyStyles()
-                onDocument(document)
+                publishDocument()
                 if (added > 1 && YouTubeLink.parse(inserted) != null) onYouTubePaste(inserted, from, from + added)
             }
         })
@@ -94,12 +101,21 @@ internal class NativeRichController {
         val editor = view ?: return
         val newTheme = dark != darkTheme
         dark = darkTheme
+        // AndroidView can run its previous update lambda before the parent has recomposed.
+        // Do not feed that old value back over a native edit awaiting acknowledgement.
+        if (pendingNativeEdit && value == lastParentDocument) {
+            if (newTheme) applyStyles()
+            return
+        }
+        lastParentDocument = value
+        pendingNativeEdit = false
         if (document != value || editor.text.toString() != value.text) {
             internalChange = true
             document = value.normalized()
-            if (editor.text.toString() != value.text) editor.setText(value.text)
+            val textChanged = editor.text.toString() != value.text
+            if (textChanged) editor.setText(value.text)
             applyStyles()
-            editor.setSelection(selectionStart.coerceIn(0, value.text.length), selectionEnd.coerceIn(0, value.text.length))
+            if (textChanged) editor.setSelection(selectionStart.coerceIn(0, value.text.length), selectionEnd.coerceIn(0, value.text.length))
             internalChange = false
         } else if (newTheme) applyStyles()
     }
@@ -140,9 +156,42 @@ internal class NativeRichController {
         }
     }
     fun insert(text: String) {
+        val editor = view ?: return
         val from = minOf(start, end)
-        view?.editableText?.replace(from, maxOf(start, end), text)
-        select(from + text.length, from + text.length)
+        val to = maxOf(start, end)
+        val updated = document.replace(from, to, text)
+        // Publish the document only after native selection is final. A synchronous Compose
+        // update must not restore the cursor from the selection preceding the replacement.
+        internalChange = true
+        try {
+            document = updated
+            editor.editableText.replace(from, to, text)
+            applyStyles()
+            select(from + text.length, from + text.length)
+        } finally { internalChange = false }
+        publishDocument()
+        if (text.length > 1 && YouTubeLink.parse(text) != null) onYouTubePaste(text, from, from + text.length)
+    }
+    fun copySelection() {
+        val editor = view ?: return
+        if (start == end) return
+        val text = document.text.substring(minOf(start, end), maxOf(start, end))
+        val clipboard = editor.context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("", text))
+    }
+    fun pastePlainText() {
+        val editor = view ?: return
+        val clipboard = editor.context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val clip = clipboard.primaryClip ?: return
+        // Read actual text only: never coerce a content URI or Intent into document text.
+        if (clip.itemCount == 0) return
+        val text = clip.getItemAt(0).text?.toString() ?: return
+        if (text.isNotEmpty()) {
+            // Delegate a validated single text item to Android, preserving its native paste
+            // and undo/redo behaviour. Multiple items must not coerce an accompanying URI.
+            if (clip.itemCount == 1) editor.onTextContextMenuItem(android.R.id.pasteAsPlainText)
+            else insert(text)
+        }
     }
     fun replaceAll(text: String) {
         view?.editableText?.replace(0, document.text.length, text)
@@ -151,22 +200,22 @@ internal class NativeRichController {
     fun format(kind: RichKind, color: String? = null) {
         document = document.toggle(kind, start, end, color)
         applyStyles()
-        onDocument(document)
+        publishDocument()
     }
     fun clear() {
         document = document.clear(start, end)
         applyStyles()
-        onDocument(document)
+        publishDocument()
     }
     fun clearColor() {
         document = document.without(RichKind.COLOR, start, end)
         applyStyles()
-        onDocument(document)
+        publishDocument()
     }
     fun setColor(color: String?) {
         document = document.withTextColor(start, end, color)
         applyStyles()
-        onDocument(document)
+        publishDocument()
     }
     fun plainParagraph() {
         val paragraphs = document.selectedParagraphs(start, end)
@@ -174,7 +223,7 @@ internal class NativeRichController {
             range.kind.block && paragraphs.any { it.first == range.start }
         }).normalized()
         applyStyles()
-        onDocument(document)
+        publishDocument()
     }
 }
 

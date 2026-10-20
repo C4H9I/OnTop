@@ -2,6 +2,7 @@ package com.ontop.app
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -29,14 +30,17 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -48,19 +52,21 @@ import com.ontop.app.ui.theme.OnTopTheme
 import com.ontop.app.ui.theme.Forest
 import com.ontop.app.ui.theme.Ink
 import com.ontop.app.backup.BackupManager
+import com.ontop.app.sharing.IncomingShare
 
 @Composable
 fun BoardScreen(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId: Long? = null,
-    onCardRequestHandled: () -> Unit = {}) {
+    onCardRequestHandled: () -> Unit = {}, incomingShare: IncomingShare? = null, onShareHandled: () -> Unit = {},
+    requestFromWidget: Boolean = false) {
     val backupActive by BackupManager.active.collectAsState()
     CompositionLocalProvider(com.ontop.app.text.LocalNoteMediaActive provides !backupActive) {
-        BoardScreenRoute(viewModel, lifecycle, requestedCardId, onCardRequestHandled)
+        BoardScreenRoute(viewModel, lifecycle, requestedCardId, onCardRequestHandled, incomingShare, onShareHandled, requestFromWidget)
     }
 }
 
 @Composable
 private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, requestedCardId: Long?,
-    onCardRequestHandled: () -> Unit) {
+    onCardRequestHandled: () -> Unit, incomingShare: IncomingShare?, onShareHandled: () -> Unit, requestFromWidget: Boolean) {
     val flow = remember(viewModel, lifecycle) { viewModel.state.flowWithLifecycle(lifecycle) }
     val state by flow.collectAsState(initial = viewModel.state.value)
     var editorOpen by rememberSaveable { mutableStateOf(false) }
@@ -69,6 +75,11 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
     var sliderOpen by rememberSaveable { mutableStateOf(false) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var tagsOpen by rememberSaveable { mutableStateOf(false) }
+    var collection by rememberSaveable { mutableStateOf<com.ontop.app.data.CardStatus?>(null) }
+    val percentNoteId = rememberSaveable { mutableStateOf<Long?>(null) }
+    var sharedDraft by rememberSaveable { mutableStateOf<IncomingShare?>(null) }
+    var sharedImagePath by rememberSaveable { mutableStateOf<String?>(null) }
+    val sharedInlineImage by viewModel.sharedInlineImage.collectAsState()
     val backupState by viewModel.backup.state.collectAsState()
     val backupActive by BackupManager.active.collectAsState()
     val revision by viewModel.backup.revision.collectAsState()
@@ -76,28 +87,52 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
     LaunchedEffect(revision) {
         if (seenRevision != revision) {
             editorOpen = false; editing = false; selectedId = null; sliderOpen = false; tagsOpen = false
+            collection = null
+            percentNoteId.value = null
+            sharedDraft = null; sharedImagePath = null
             viewModel.sliderSession.currentId = null; viewModel.sliderSession.index = 0
             seenRevision = revision
         }
     }
     val gridState = rememberLazyStaggeredGridState()
-    val selected = state.cards.firstOrNull { it.id == selectedId }
+    val selected = state.storedCards.firstOrNull { it.id == selectedId }
     val filteredCards = remember(state.cards, state.cardTags, state.selectedTagId) {
         filterCardsByTag(state.cards, state.cardTags, state.selectedTagId)
     }
 
     // A widget launch waits for the user to save or discard the active draft.
-    LaunchedEffect(requestedCardId, state.loading, state.cards, state.saving, editing, backupActive) {
-        if (requestedCardId != null && !state.loading && !state.saving && !editing && !backupActive) {
+    LaunchedEffect(requestedCardId, state.loading, state.cards, state.saving, editing, backupActive, percentNoteId.value) {
+        if (requestedCardId != null && !state.loading && !state.saving && !editing && !backupActive && percentNoteId.value == null) {
             if (state.cards.any { it.id == requestedCardId }) {
                 selectedId = requestedCardId
                 editing = false
                 editorOpen = true
+                if (requestFromWidget) viewModel.recordOpening(requestedCardId, com.ontop.app.data.NoteInteractionType.WIDGET_OPENED)
                 onCardRequestHandled()
             } else {
                 viewModel.cardNotFound()
                 onCardRequestHandled()
             }
+        }
+    }
+    val context = LocalContext.current
+    state.storedCards.firstOrNull { it.id == percentNoteId.value }?.let { note ->
+        NotePercentagesDialog(note.id, note.importance, note.progress, onDismiss = { percentNoteId.value = null },
+            onSave = { importance, progress -> viewModel.savePercentages(note.id, importance, progress) { percentNoteId.value = null } },
+            saving = state.saving, error = state.error)
+    }
+    LaunchedEffect(incomingShare?.id) {
+        if (incomingShare != null && (editorOpen || percentNoteId.value != null)) android.widget.Toast.makeText(context,
+            "Материал получен. Закройте текущую заметку, чтобы открыть его.", android.widget.Toast.LENGTH_LONG).show()
+    }
+    LaunchedEffect(incomingShare?.id, state.loading, state.saving, editorOpen, backupActive, backupState.recoveryRequired, percentNoteId.value) {
+        if (incomingShare != null && !state.loading && !state.saving && !editorOpen && !backupActive && !backupState.recoveryRequired && percentNoteId.value == null) {
+            selectedId = null; sharedDraft = incomingShare; sharedImagePath = null
+            collection = null
+            settingsOpen = false; tagsOpen = false; sliderOpen = false
+            editing = true; editorOpen = true
+            viewModel.clearError()
+            onShareHandled()
         }
     }
     if (settingsOpen || backupState.recoveryRequired) {
@@ -108,10 +143,16 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
 
     // Do not show the create form for a deleted card or before Room has loaded it.
     LaunchedEffect(state.loading, state.cards, selectedId) {
-        if (!state.loading && selectedId != null && selected == null) {
+        if (!state.loading && selectedId != null && state.storedCards.none { it.id == selectedId }) {
             editorOpen = false
             editing = false
         }
+    }
+    if (collection != null && !editorOpen) {
+        NoteCollectionScreen(collection!!, state, onBack = { collection = null }, onOpen = {
+            selectedId = it.id; editing = false; editorOpen = true; viewModel.clearError()
+        })
+        return
     }
     if ((!editorOpen || !editing) && (!sliderOpen || editorOpen)) BoardContent(state, gridState = gridState, onAdd = {
         selectedId = null
@@ -119,17 +160,23 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
         editorOpen = true
         viewModel.clearError()
     }, onOpen = {
+        viewModel.recordOpening(it.id, com.ontop.app.data.NoteInteractionType.NOTE_OPENED)
         selectedId = it.id
         editing = false
         editorOpen = true
         viewModel.clearError()
     }, onView = { viewModel.sliderSession.enter(filteredCards); sliderOpen = true }, onSettings = { settingsOpen = true },
-        onSort = viewModel::setBoardSort, onSelectTag = viewModel::selectTag, onManageTags = { viewModel.clearError(); tagsOpen = true })
+        onSort = viewModel::setBoardSort, onSelectTag = viewModel::selectTag, onManageTags = { viewModel.clearError(); tagsOpen = true },
+        onCollection = { collection = it }, onPercentages = { viewModel.clearError(); percentNoteId.value = it.id })
 
     if (tagsOpen) TagManagementDialog(state, viewModel::createTag, viewModel::renameTag, viewModel::deleteTag,
         onClose = { tagsOpen = false; viewModel.clearError() })
 
     if (sliderOpen && !editorOpen) NoteSliderScreen(filteredCards, viewModel.sliderSession,
+        onSliderViewed = { viewModel.recordOpening(it, com.ontop.app.data.NoteInteractionType.SLIDER_VIEWED) },
+        tags = state.tags, cardTags = state.cardTags,
+        saving = state.saving, error = state.error,
+        onSavePercentages = viewModel::savePercentages, onClearError = viewModel::clearError,
         onClose = { sliderOpen = false },
         onEdit = { selectedId = it.id; editing = true; editorOpen = true; viewModel.clearError() },
         onDetails = { selectedId = it.id; editing = false; editorOpen = true; viewModel.clearError() })
@@ -140,15 +187,30 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
             onEdit = { editing = true; viewModel.clearError() })
     }
     if (editorOpen && editing && (selectedId == null || selected != null)) {
-        LaunchedEffect(selectedId) { viewModel.beginImageEdit(selected) }
+        LaunchedEffect(selectedId, sharedDraft?.id) {
+            viewModel.beginImageEdit(selected)
+            sharedDraft?.let { draft ->
+                if (draft.imageUri != null)
+                    viewModel.prepareSharedImage(draft.id, android.net.Uri.parse(draft.imageUri), sharedImagePath)
+            }
+        }
+        LaunchedEffect(sharedInlineImage, sharedDraft?.id) {
+            if (sharedInlineImage?.first == sharedDraft?.id) sharedImagePath = sharedInlineImage?.second
+        }
+        key(sharedDraft?.id) {
         CardEditorRoute(
             card = selected,
             state = state,
             viewModel = viewModel,
-            onDismiss = { viewModel.cancelImageEdit { editing = false; editorOpen = selected != null && !sliderOpen } },
-            onSaved = { editorOpen = false; editing = false },
-            onDelete = { selected?.let { card -> viewModel.delete(card) { editorOpen = false; editing = false } } }
+            onDismiss = { viewModel.cancelImageEdit {
+                editing = false; editorOpen = selected != null && !sliderOpen
+                sharedDraft = null; sharedImagePath = null
+            } },
+            onSaved = { editorOpen = false; editing = false; sharedDraft = null; sharedImagePath = null },
+            onDelete = { selected?.let { card -> viewModel.delete(card) { editorOpen = false; editing = false } } },
+            sharedDraft = sharedDraft, sharedInlinePath = sharedImagePath
         )
+        }
     }
 }
 
@@ -156,7 +218,8 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
 internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEntity) -> Unit,
     gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(), onView: () -> Unit = {},
     onSettings: () -> Unit = {}, onSort: (BoardSort) -> Unit = {},
-    onSelectTag: (Long?) -> Unit = {}, onManageTags: () -> Unit = {}) {
+    onSelectTag: (Long?) -> Unit = {}, onManageTags: () -> Unit = {},
+    onCollection: (com.ontop.app.data.CardStatus) -> Unit = {}, onPercentages: (CardEntity) -> Unit = {}) {
     val displayedCards = remember(state.cards, state.sortMode, state.cardTags, state.selectedTagId) {
         sortedBoardCards(filterCardsByTag(state.cards, state.cardTags, state.selectedTagId), state.sortMode)
     }
@@ -180,9 +243,7 @@ internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnt
         }
     ) { innerPadding ->
         Column(Modifier.fillMaxSize().padding(innerPadding).consumeWindowInsets(innerPadding)) {
-            BoardHeader(onSettings, state.sortMode, onSort, !state.loading)
-            TextButton(onClick = onView, enabled = !state.loading,
-                modifier = Modifier.padding(horizontal = 12.dp)) { Text("Просмотр →") }
+            BoardHeader(onSettings, state.sortMode, onSort, !state.loading, onCollection, onView)
             TopicFilter(state, onSelectTag, onManageTags)
             if (state.error != null) {
                 Text(state.error, color = MaterialTheme.colorScheme.error,
@@ -213,7 +274,8 @@ internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnt
                     ) {
                         items(displayedCards, key = { it.id }, span = {
                             if (it.size == CardSize.WIDE) StaggeredGridItemSpan.FullLine else StaggeredGridItemSpan.SingleLane
-                        }) { card -> ThoughtTile(card, onClick = { onOpen(card) }) }
+                        }) { card -> ThoughtTile(card, onClick = { onOpen(card) },
+                            onPercentages = { onPercentages(card) }, enabled = !state.saving) }
                     }
                 }
             }
@@ -222,7 +284,7 @@ internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnt
 }
 
 @Composable
-private fun ThoughtTile(card: CardEntity, onClick: () -> Unit) {
+private fun ThoughtTile(card: CardEntity, onClick: () -> Unit, onPercentages: () -> Unit, enabled: Boolean) {
     // Stable IDs keep the colour and minimum height unchanged when neighbouring cards change.
     val variant = Math.floorMod(card.id, 3L).toInt()
     val background = cardBackground(card.id)
@@ -241,7 +303,12 @@ private fun ThoughtTile(card: CardEntity, onClick: () -> Unit) {
             contentColor = if (hasImage || background == Forest) Color.White else Ink
         )
     ) {
-        CardVisual(card, minHeight = minHeight)
+        Box {
+            CardVisual(card, Modifier.testTag("tile-visual-${card.id}"), minHeight = minHeight)
+            NoteStatusIndicator(card.importance, card.progress,
+                Modifier.align(Alignment.TopEnd).padding(8.dp).testTag("tile-status-${card.id}"),
+                variant = StatusIndicatorSize.Compact, enabled = enabled, onClick = onPercentages)
+        }
     }
 }
 

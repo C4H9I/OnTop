@@ -104,7 +104,7 @@ class BackupSettingsTest {
             assertEquals("Исходная версия", db.cardDao().findById(1)!!.title)
             compose.onNodeWithText("Назад").performClick()
             compose.onNodeWithText("Исходная версия").assertIsDisplayed()
-            compose.onNodeWithText("Просмотр →").performClick()
+            compose.onNodeWithContentDescription("Просмотр заметок").performClick()
             compose.onNodeWithText("1 из 1").assertIsDisplayed()
             compose.onNodeWithText("Редактировать").performClick()
             compose.onNodeWithTag("editor-title").performTextReplacement("Устаревший черновик")

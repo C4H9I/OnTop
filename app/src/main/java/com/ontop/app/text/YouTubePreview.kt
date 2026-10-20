@@ -74,7 +74,7 @@ internal val LocalYouTubePreviewLoader = staticCompositionLocalOf<YouTubePreview
 
 @Composable
 internal fun YouTubePreview(video: YouTubeLink, modifier: Modifier = Modifier,
-    onPlay: () -> Unit, onRemove: (() -> Unit)? = null) {
+    onPlay: () -> Unit, onRemove: (() -> Unit)? = null, onConvertToLink: (() -> Unit)? = null) {
     val loader = LocalYouTubePreviewLoader.current
     val context = LocalContext.current
     var retry by remember(video.id) { mutableIntStateOf(0) }
@@ -137,6 +137,8 @@ internal fun YouTubePreview(video: YouTubeLink, modifier: Modifier = Modifier,
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text("Обновить обложку") }, onClick = { menu = false; retry++ })
                     DropdownMenuItem(text = { Text("Открыть в YouTube") }, onClick = { menu = false; open() })
+                    if (onConvertToLink != null) DropdownMenuItem(text = { Text("Преобразовать в ссылку") },
+                        onClick = { menu = false; onConvertToLink() })
                     DropdownMenuItem(text = { Text("Удалить видео") }, onClick = { menu = false; onRemove() })
                 }
             }

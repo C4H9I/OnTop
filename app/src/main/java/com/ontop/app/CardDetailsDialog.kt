@@ -12,7 +12,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.luminance
+import com.ontop.app.data.TagEntity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -24,6 +26,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.flowWithLifecycle
 import com.ontop.app.data.CardEntity
+import com.ontop.app.data.CardStatus
 import com.ontop.app.data.CardCommentEntity
 import com.ontop.app.data.ReminderEntity
 import com.ontop.app.reminders.summary
@@ -47,7 +50,11 @@ internal fun CardDetailsDialog(
     onDismiss: () -> Unit,
     onEdit: () -> Unit
 ) {
+    val context = LocalContext.current
+    val shareScope = rememberCoroutineScope()
+    var sharing by remember(card.id) { mutableStateOf(false) }
     var reminderOpen by rememberSaveable(card.id) { mutableStateOf(false) }
+    var percentagesOpen by rememberSaveable(card.id) { mutableStateOf(false) }
     var reminderLoaded by remember(card.id) { mutableStateOf(false) }
     var reminderError by remember(card.id) { mutableStateOf(false) }
     val reminderFlow = remember(card.id, viewModel, lifecycle) {
@@ -69,6 +76,7 @@ internal fun CardDetailsDialog(
     val reminderStatus = when {
         reminderError -> "Не удалось загрузить напоминание"
         !reminderLoaded -> "Загрузка напоминания…"
+        card.status != CardStatus.ACTIVE -> "Напоминания приостановлены до восстановления заметки"
         currentReminder != null -> currentReminder!!.summary(summaryNow)
         else -> "Напоминание выключено"
     }
@@ -86,7 +94,7 @@ internal fun CardDetailsDialog(
     Dialog(onDismissRequest = { if (!state.saving) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val view = LocalView.current
-        val lightSurface = MaterialTheme.colorScheme.background.luminance() > 0.5f
+        val lightSurface = true // The reading surface is white in both application themes.
         SideEffect {
             (view.parent as? DialogWindowProvider)?.window?.let { window ->
                 WindowCompat.getInsetsController(window, view).apply {
@@ -99,12 +107,36 @@ internal fun CardDetailsDialog(
             CardDetailsContent(card, comments, loaded, loadError, state.saving, state.error,
                 onAddComment = { text, success -> viewModel.addComment(card.id, text, success) },
                 onDeleteComment = viewModel::deleteComment, onDismiss = onDismiss, onEdit = onEdit,
-                onReminder = { reminderOpen = true }, reminderStatus = reminderStatus)
+                onReminder = { reminderOpen = true }, reminderStatus = reminderStatus,
+                onPercentages = { viewModel.clearError(); percentagesOpen = true },
+                tags = state.tags.filter { tag -> state.cardTags.any { it.cardId == card.id && it.tagId == tag.id } },
+                onArchive = { viewModel.changeStatus(card, CardStatus.ARCHIVED, onDismiss) },
+                onRestore = { viewModel.changeStatus(card, CardStatus.ACTIVE, onDismiss) },
+                onTrash = { viewModel.delete(card, onDismiss) },
+                onPermanentDelete = { viewModel.permanentlyDelete(card, onDismiss) },
+                sharing = sharing, onShare = {
+                    sharing = true
+                    shareScope.launch {
+                        try {
+                            val prepared = com.ontop.app.sharing.OutgoingShare.prepare(context, card)
+                            if (prepared.imageUnavailable) android.widget.Toast.makeText(context,
+                                "Не удалось приложить изображение. Доступна отправка текста.", android.widget.Toast.LENGTH_LONG).show()
+                            context.startActivity(android.content.Intent.createChooser(prepared.intent, "Поделиться заметкой"))
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled
+                        } catch (_: Exception) { android.widget.Toast.makeText(context,
+                            "Не удалось открыть меню «Поделиться».", android.widget.Toast.LENGTH_LONG).show()
+                        } finally { sharing = false }
+                    }
+                })
         }
     }
     if (reminderOpen) key(card.id) {
         ReminderSettingsDialog(card.id, viewModel) { reminderOpen = false }
     }
+    if (percentagesOpen) NotePercentagesDialog(card.id, card.importance, card.progress,
+        onDismiss = { percentagesOpen = false },
+        onSave = { importance, progress -> viewModel.savePercentages(card.id, importance, progress) { percentagesOpen = false } },
+        saving = state.saving, error = state.error)
 }
 
 @Composable
@@ -121,8 +153,20 @@ internal fun CardDetailsContent(
     onEdit: () -> Unit,
     modifier: Modifier = Modifier,
     onReminder: (() -> Unit)? = null,
-    reminderStatus: String = "Напоминание выключено"
+    reminderStatus: String = "Напоминание выключено",
+    onShare: (() -> Unit)? = null, sharing: Boolean = false,
+    onArchive: (() -> Unit)? = null, onRestore: (() -> Unit)? = null,
+    onTrash: (() -> Unit)? = null, onPermanentDelete: (() -> Unit)? = null,
+    onPercentages: (() -> Unit)? = null,
+    tags: List<TagEntity> = emptyList()
 ) {
+    var menu by remember { mutableStateOf(false) }
+    var confirmPermanent by rememberSaveable(card.id) { mutableStateOf(false) }
+    if (confirmPermanent) AlertDialog(onDismissRequest = { confirmPermanent = false },
+        title = { Text("Удалить заметку навсегда?") },
+        text = { Text("Заметка, комментарии и неиспользуемые изображения будут удалены без возможности восстановления.") },
+        confirmButton = { TextButton(enabled = !saving, onClick = { confirmPermanent = false; onPermanentDelete?.invoke() }) { Text("Удалить навсегда") } },
+        dismissButton = { TextButton(onClick = { confirmPermanent = false }) { Text("Отмена") } })
     var draft by rememberSaveable(card.id) { mutableStateOf("") }
     var deletingId by rememberSaveable(card.id) { mutableStateOf<Long?>(null) }
     var pendingId by rememberSaveable(card.id) { mutableStateOf<Long?>(null) }
@@ -160,28 +204,55 @@ internal fun CardDetailsContent(
         }
     }
 
+    MaterialTheme(colorScheme = noteReadingColors()) {
     Surface(modifier.fillMaxSize().testTag("card-details"), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onDismiss, enabled = !saving) {
                     Icon(painterResource(R.drawable.ic_back), contentDescription = "Закрыть карточку")
                 }
-                TextButton(onClick = onEdit, enabled = !saving, modifier = Modifier.weight(1f)) {
+                TextButton(onClick = onEdit, enabled = !saving && card.status != CardStatus.TRASHED, modifier = Modifier.weight(1f)) {
                     Text("Редактировать")
+                }
+                if (onShare != null) IconButton(onClick = onShare, enabled = !saving && !sharing,
+                    modifier = Modifier.testTag("share-note")) {
+                    Icon(painterResource(R.drawable.ic_share), contentDescription = "Поделиться",
+                        tint = MaterialTheme.colorScheme.primary)
                 }
                 if (onReminder != null) IconButton(onClick = onReminder, enabled = !saving,
                     modifier = Modifier.testTag("reminder-settings")) {
                     Icon(painterResource(R.drawable.ic_bell), contentDescription = "Настроить напоминание",
                         tint = MaterialTheme.colorScheme.primary)
                 }
+                Box {
+                    IconButton(onClick = { menu = true }, enabled = !saving) {
+                        Icon(painterResource(R.drawable.ic_more), "Меню заметки")
+                    }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        if (card.status != CardStatus.TRASHED) DropdownMenuItem(text = { Text("Редактировать") },
+                            onClick = { menu = false; onEdit() })
+                        if (onShare != null) DropdownMenuItem(text = { Text("Поделиться") }, enabled = !sharing,
+                            onClick = { menu = false; onShare() })
+                        if (card.status == CardStatus.ACTIVE && onArchive != null) DropdownMenuItem(text = { Text("Архивировать") },
+                            onClick = { menu = false; onArchive() })
+                        if (card.status != CardStatus.ACTIVE && onRestore != null) DropdownMenuItem(
+                            text = { Text(if (card.status == CardStatus.ARCHIVED) "Восстановить из архива" else "Восстановить из корзины") },
+                            onClick = { menu = false; onRestore() })
+                        if (card.status != CardStatus.TRASHED && onTrash != null) DropdownMenuItem(text = { Text("Удалить") },
+                            onClick = { menu = false; onTrash() })
+                        if (card.status == CardStatus.TRASHED && onPermanentDelete != null) DropdownMenuItem(text = { Text("Удалить навсегда") },
+                            onClick = { menu = false; confirmPermanent = true })
+                    }
+                }
             }
             LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("reflection-list"), state = list,
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp)) {
                 item(key = "summary") {
                     Column {
-                        CardVisual(card, modifier = Modifier.testTag("details-hero"),
-                            minHeight = if (card.imagePath != null) 280.dp else 200.dp,
-                            titleStyle = MaterialTheme.typography.headlineSmall, maxImageSide = 1600)
+                        NoteStatusWithTopics(card, tags, "details-status-${card.id}",
+                            enabled = !saving && card.status != CardStatus.TRASHED, onClick = onPercentages,
+                            modifier = Modifier.padding(bottom = 12.dp))
+                        NoteReadingTitle(card.title, Modifier.testTag("details-title"))
                         val document = RichTextCodec.decode(card.description, card.formatting)
                         if (document.media.isNotEmpty()) MultimediaNoteView(document)
                         else if (card.description.isNotBlank()) {
@@ -254,6 +325,7 @@ internal fun CardDetailsContent(
                 }
             }
         }
+    }
     }
     deletingId?.let { id ->
         AlertDialog(onDismissRequest = { if (!saving) deletingId = null },

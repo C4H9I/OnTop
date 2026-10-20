@@ -18,7 +18,8 @@ import kotlinx.coroutines.CancellationException
 /** The whole reminder is a saveable editor draft; opening its settings never writes to Room. */
 @Composable
 internal fun CardEditorRoute(card: CardEntity?, state: BoardState, viewModel: BoardViewModel,
-    onDismiss: () -> Unit, onSaved: () -> Unit, onDelete: () -> Unit) {
+    onDismiss: () -> Unit, onSaved: () -> Unit, onDelete: () -> Unit,
+    sharedDraft: com.ontop.app.sharing.IncomingShare? = null, sharedInlinePath: String? = null) {
     var initialReminder by rememberSaveable(card?.id) { mutableStateOf<ReminderDraft?>(null) }
     var reminder by rememberSaveable(card?.id) { mutableStateOf<ReminderDraft?>(null) }
     var loaded by rememberSaveable(card?.id) { mutableStateOf(card == null) }
@@ -44,7 +45,7 @@ internal fun CardEditorRoute(card: CardEntity?, state: BoardState, viewModel: Bo
     }
     fun save(draft: PendingNoteSave) {
         viewModel.saveNote(card, draft.title, draft.description, draft.size, reminder, changed, onSaved,
-            draft.formatting, draft.importance, draft.ids, draft.names)
+            draft.formatting, draft.importance, draft.ids, draft.names, draft.progress)
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         requestingPermission = false
@@ -57,8 +58,8 @@ internal fun CardEditorRoute(card: CardEntity?, state: BoardState, viewModel: Bo
         onPickerFailed = viewModel::imagePickerFailed, onDismiss = onDismiss,
         onSave = { _, _, _ -> },
         availableTags = state.tags, initialTagIds = state.cardTags.filter { it.cardId == card?.id }.map { it.tagId },
-        onSaveTagged = { title, description, size, formatting, importance, ids, names ->
-            val draft = PendingNoteSave(title, description, size, formatting, importance, ArrayList(ids), ArrayList(names))
+        onSaveTagged = { title, description, size, formatting, importance, progress, ids, names ->
+            val draft = PendingNoteSave(title, description, size, formatting, importance, progress, ArrayList(ids), ArrayList(names))
             if (changed && reminder?.enabled == true && Build.VERSION.SDK_INT >= 33 &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 pending = draft
@@ -66,11 +67,13 @@ internal fun CardEditorRoute(card: CardEntity?, state: BoardState, viewModel: Bo
                 permission.launch(Manifest.permission.POST_NOTIFICATIONS)
             } else save(draft)
         }, onDelete = onDelete, reminderChanged = changed, remindersReady = loaded,
-        onReminders = { reminderOpen = true }, reminderLoadError = loadError, onRetryReminders = { retry++ })
+        onReminders = { reminderOpen = true }, reminderLoadError = loadError, onRetryReminders = { retry++ },
+        initialSharedTitle = sharedDraft?.title, initialSharedText = sharedDraft?.text,
+        sharedInlinePath = sharedInlinePath)
     if (reminderOpen) {
         ReminderDraftDialog(reminder, onApply = { reminder = it }, onDismiss = { reminderOpen = false })
     }
 }
 
 private data class PendingNoteSave(val title: String, val description: String, val size: CardSize,
-    val formatting: String?, val importance: Int, val ids: ArrayList<Long>, val names: ArrayList<String>) : java.io.Serializable
+    val formatting: String?, val importance: Int, val progress: Int?, val ids: ArrayList<Long>, val names: ArrayList<String>) : java.io.Serializable

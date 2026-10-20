@@ -14,6 +14,26 @@ import org.junit.Test
 class WidgetRotationTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
+    @Test fun archivedAndTrashedNotesAreHiddenFromFixedAndRotationAndReturnAfterRestore() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, OnTopDatabase::class.java).build()
+        val store = WidgetSelectionStore(context, "lifecycle-widget-${System.nanoTime()}")
+        try {
+            val first = CardEntity(1, "A", createdAt = 1, updatedAt = 1, sortOrder = 0)
+            val second = first.copy(id = 2, title = "B", sortOrder = 1)
+            db.cardDao().insert(first); db.cardDao().insert(second)
+            store.save(1, WidgetSelection(WidgetMode.FIXED, fixedId = 1))
+            store.save(2, WidgetSelection(WidgetMode.ROTATION, currentId = 1))
+            db.cardDao().update(first.copy(status = CardStatus.ARCHIVED))
+            assertNull(CardWidget().load(context, 1, db, store).cardId)
+            assertEquals(2L, CardWidget().load(context, 2, db, store).cardId)
+            db.cardDao().update(second.copy(status = CardStatus.TRASHED))
+            assertNull(CardWidget().load(context, 2, db, store).cardId)
+            db.cardDao().update(first)
+            assertEquals(1L, CardWidget().load(context, 1, db, store).cardId)
+            assertEquals(1L, CardWidget().load(context, 2, db, store).cardId)
+        } finally { store.clear(); db.close() }
+    }
+
     @Test fun legacySelectionsIndependentRotationConcurrentTapsAndDeletedNotes() = runBlocking {
         val db = Room.inMemoryDatabaseBuilder(context, OnTopDatabase::class.java).build()
         val name = "rotation-test-${System.nanoTime()}"
@@ -51,6 +71,7 @@ class WidgetRotationTest {
             assertEquals("Пока нет заметок", CardWidget().load(context, 2, db, store).title)
             val c = db.cardDao().insert(before.copy(id = 0, title = "После пустого списка"))
             assertEquals(c, CardWidget().load(context, 2, db, store).cardId)
+            assertTrue("Automatic rotation and manual switching never count as opening", db.noteInteractionDao().all().isEmpty())
             store.remove(2)
             assertTrue(store.rotationIds().isEmpty())
             assertEquals(a, store.get(1))
@@ -96,7 +117,7 @@ class WidgetRotationTest {
                 old.version = 6
             }
             db = Room.databaseBuilder(context, OnTopDatabase::class.java, name)
-                .addMigrations(OnTopDatabase.MIGRATION_6_7, OnTopDatabase.MIGRATION_7_8).build()
+                .addMigrations(OnTopDatabase.MIGRATION_6_7, OnTopDatabase.MIGRATION_7_8, OnTopDatabase.MIGRATION_8_9, OnTopDatabase.MIGRATION_9_10, OnTopDatabase.MIGRATION_10_11).build()
             val card = db.cardDao().findById(7)!!
             assertEquals(CardEntity(7, "Title", "Body", CardSize.WIDE, 100, 200, 3), card)
             db.cardDao().update(card.copy(importance = 100))

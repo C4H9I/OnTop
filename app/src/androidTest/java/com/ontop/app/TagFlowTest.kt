@@ -43,7 +43,7 @@ class TagFlowTest(private val width: Int) {
         init {
             if (seedCards) runBlocking {
                 db.cardDao().insert(CardEntity(1, "Первая", size = CardSize.WIDE, createdAt = 1, updatedAt = 3, sortOrder = 0, importance = 20))
-                db.cardDao().insert(CardEntity(2, "Вторая", size = CardSize.WIDE, createdAt = 2, updatedAt = 2, sortOrder = 1, importance = 100))
+                db.cardDao().insert(CardEntity(2, "Вторая", size = CardSize.WIDE, createdAt = 2, updatedAt = 2, sortOrder = 1, importance = 100, progress = 100))
                 db.tagDao().replaceForCard(1, listOf(work, home), emptyList())
                 db.tagDao().replaceForCard(2, listOf(work), emptyList())
             }
@@ -69,6 +69,7 @@ class TagFlowTest(private val width: Int) {
         return tester
     }
     private fun topics() {
+        androidx.test.espresso.Espresso.closeSoftKeyboard()
         compose.waitUntil(10_000) {
             if (compose.onAllNodesWithText("Темы").fetchSemanticsNodes().size == 1) true
             else {
@@ -148,12 +149,20 @@ class TagFlowTest(private val width: Int) {
             val first = compose.onNodeWithTag("card-2").fetchSemanticsNode().boundsInRoot
             val second = compose.onNodeWithTag("card-1").fetchSemanticsNode().boundsInRoot
             assertTrue(first.top < second.top)
+            compose.onNodeWithTag("board-sort").performClick()
+            compose.onNodeWithTag("board-sort-PROGRESS").performClick()
+            compose.waitUntil(5000) { f.model.state.value.sortMode == BoardSort.PROGRESS }
+            f.db.cardDao().updatePercentages(1, 20, 100, 10)
+            compose.waitUntil(5000) { f.model.state.value.cards.any { it.id == 1L && it.progress == 100 } }
+            val updatedFirst = compose.onNodeWithTag("card-1").fetchSemanticsNode().boundsInRoot
+            val updatedSecond = compose.onNodeWithTag("card-2").fetchSemanticsNode().boundsInRoot
+            assertTrue(updatedFirst.top < updatedSecond.top)
             filter(f.home)
             tester.emulateSavedInstanceStateRestore()
             compose.onNodeWithTag("topic-${f.home}").assertIsSelected()
             compose.onNodeWithTag("card-2").assertDoesNotExist()
             compose.onNodeWithTag("card-1").assertIsDisplayed()
-            compose.onNodeWithText("Просмотр →").performClick()
+            compose.onNodeWithContentDescription("Просмотр заметок").performClick()
             compose.onNodeWithTag("slide-1").assertIsDisplayed()
             compose.onNodeWithTag("slide-2").assertDoesNotExist()
             compose.onNodeWithText("Закрыть").performClick()

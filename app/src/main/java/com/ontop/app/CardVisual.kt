@@ -42,7 +42,8 @@ internal fun CardVisual(
         }
         val titleSurface = if (hasImage) Modifier.drawWithCache {
             val gradient = Brush.verticalGradient(
-                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.82f)), endY = 48.dp.toPx())
+                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.82f)),
+                endY = 48.dp.toPx())
             onDrawBehind { drawRect(gradient) }
         }.padding(top = 48.dp) else Modifier
         Text(card.title, style = titleStyle,

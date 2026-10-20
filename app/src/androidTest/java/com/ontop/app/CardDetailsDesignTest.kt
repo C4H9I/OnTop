@@ -137,12 +137,10 @@ class CardDetailsDesignTest(private val width: Int, private val fontScale: Float
                     onAddComment = { _, _ -> error = "Не удалось сохранить комментарий" },
                     onDeleteComment = { _, _ -> }, onDismiss = {}, onEdit = {})
             }
-            compose.waitUntil(5_000) {
-                val image = compose.onNodeWithTag("details-hero").captureToImage().asAndroidBitmap()
-                android.graphics.Color.red(image.getPixel(image.width / 2, 30)) > 245
-            }
-            val image = compose.onNodeWithTag("details-hero").captureToImage().asAndroidBitmap()
-            assertTrue(android.graphics.Color.red(image.getPixel(image.width / 2, image.height - 12)) < 100)
+            compose.onNodeWithTag("details-hero").assertDoesNotExist()
+            val image = compose.onNodeWithTag("details-title").captureToImage().asAndroidBitmap()
+            assertEquals(android.graphics.Color.WHITE, image.getPixel(image.width / 2, 2))
+            compose.onNodeWithText("Сохраняй внимание").assertIsDisplayed()
             screenshot("photo")
             compose.onNodeWithTag("reflection-list").performScrollToIndex(2)
             val layouts = mutableListOf<TextLayoutResult>()

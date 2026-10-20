@@ -17,7 +17,8 @@ import kotlinx.coroutines.CancellationException
 
 @Composable
 internal fun BoardHeader(onSettings: () -> Unit = {}, sortMode: BoardSort = BoardSort.MANUAL,
-    onSort: (BoardSort) -> Unit = {}, sortEnabled: Boolean = true) {
+    onSort: (BoardSort) -> Unit = {}, sortEnabled: Boolean = true,
+    onCollection: (com.ontop.app.data.CardStatus) -> Unit = {}, onView: () -> Unit = {}) {
     val context = LocalContext.current.applicationContext
     var info by remember { mutableStateOf<AppVersionInfo?>(null) }
     var error by remember { mutableStateOf(false) }
@@ -31,14 +32,16 @@ internal fun BoardHeader(onSettings: () -> Unit = {}, sortMode: BoardSort = Boar
         catch (_: Exception) { error = true }
     }
     BoardHeaderContent(info, menuOpen, { menuOpen = it }, { menuOpen = false; aboutOpen = true },
-        { menuOpen = false; onSettings() }, sortMode, onSort, sortEnabled)
+        { menuOpen = false; onSettings() }, sortMode, onSort, sortEnabled,
+        { menuOpen = false; onCollection(it) }, onView)
     if (aboutOpen) AboutDialog(info, error, { retry++ }, { aboutOpen = false })
 }
 
 @Composable
 internal fun BoardHeaderContent(info: AppVersionInfo?, menuOpen: Boolean,
     onMenuOpen: (Boolean) -> Unit, onAbout: () -> Unit, onSettings: () -> Unit = {},
-    sortMode: BoardSort = BoardSort.MANUAL, onSort: (BoardSort) -> Unit = {}, sortEnabled: Boolean = true) {
+    sortMode: BoardSort = BoardSort.MANUAL, onSort: (BoardSort) -> Unit = {}, sortEnabled: Boolean = true,
+    onCollection: (com.ontop.app.data.CardStatus) -> Unit = {}, onView: () -> Unit = {}) {
     var sortOpen by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically) {
@@ -48,6 +51,9 @@ internal fun BoardHeaderContent(info: AppVersionInfo?, menuOpen: Boolean,
             if (info?.isDebug == true) Text("DEV · ${info.shortId}",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.testTag("dev-build"))
+        }
+        IconButton(onClick = onView, enabled = sortEnabled, modifier = Modifier.testTag("board-view")) {
+            Icon(painterResource(R.drawable.ic_review), contentDescription = "Просмотр заметок")
         }
         Box {
             IconButton(onClick = { sortOpen = true }, enabled = sortEnabled,
@@ -72,6 +78,8 @@ internal fun BoardHeaderContent(info: AppVersionInfo?, menuOpen: Boolean,
             DropdownMenu(expanded = menuOpen, onDismissRequest = { onMenuOpen(false) },
                 containerColor = MaterialTheme.colorScheme.surface) {
                 DropdownMenuItem(text = { Text("Настройки") }, onClick = onSettings)
+                DropdownMenuItem(text = { Text("Архив") }, onClick = { onCollection(com.ontop.app.data.CardStatus.ARCHIVED) })
+                DropdownMenuItem(text = { Text("Корзина") }, onClick = { onCollection(com.ontop.app.data.CardStatus.TRASHED) })
                 DropdownMenuItem(text = { Text("О приложении") }, onClick = onAbout)
             }
         }

@@ -8,5 +8,5 @@ internal fun rotationCandidates(cards: List<CardEntity>, links: List<CardTagCros
     tagIds: Set<Long>, filterEnabled: Boolean): List<CardEntity> {
     val matching = if (filterEnabled) links.asSequence().filter { it.tagId in tagIds }
         .map { it.cardId }.toSet() else emptySet()
-    return cards.filter { !filterEnabled || it.id in matching }.distinctBy { it.id }
+    return cards.filter { it.status == com.ontop.app.data.CardStatus.ACTIVE && (!filterEnabled || it.id in matching) }.distinctBy { it.id }
 }

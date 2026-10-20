@@ -5,6 +5,7 @@ import androidx.room.PrimaryKey
 import androidx.room.ColumnInfo
 
 enum class CardSize { NORMAL, WIDE }
+enum class CardStatus { ACTIVE, ARCHIVED, TRASHED }
 
 @Entity(tableName = "cards")
 data class CardEntity(
@@ -17,5 +18,7 @@ data class CardEntity(
     val sortOrder: Long,
     val imagePath: String? = null,
     val formatting: String? = null,
-    @ColumnInfo(defaultValue = "50") val importance: Int = 50
+    @ColumnInfo(defaultValue = "50") val importance: Int = 50,
+    @ColumnInfo(defaultValue = "'ACTIVE'") val status: CardStatus = CardStatus.ACTIVE,
+    val progress: Int? = null
 )
