@@ -6,6 +6,7 @@ import androidx.room.ColumnInfo
 
 enum class CardSize { NORMAL, WIDE }
 enum class CardStatus { ACTIVE, ARCHIVED, TRASHED }
+enum class NoteType { NOTE, CHECKLIST }
 
 @Entity(tableName = "cards")
 data class CardEntity(
@@ -20,5 +21,7 @@ data class CardEntity(
     val formatting: String? = null,
     @ColumnInfo(defaultValue = "50") val importance: Int = 50,
     @ColumnInfo(defaultValue = "'ACTIVE'") val status: CardStatus = CardStatus.ACTIVE,
-    val progress: Int? = null
+    val progress: Int? = null,
+    @ColumnInfo(defaultValue = "'NOTE'") val noteType: NoteType = NoteType.NOTE,
+    val checklistJson: String? = null
 )

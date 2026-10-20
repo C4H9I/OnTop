@@ -96,7 +96,7 @@ class TagBackupTest {
             val journal = File(root, "restore.json")
             val record = JSONObject(journal.readText()).apply {
                 remove("fingerprintVersion")
-                put("fingerprint", BackupFormat.fingerprint(manager.snapshot(), includeTags = false, includeStatus = false, includeProgress = false, includeInteractions = false))
+                put("fingerprint", BackupFormat.fingerprint(manager.snapshot(), includeTags = false, includeStatus = false, includeProgress = false, includeInteractions = false, includeChecklist = false))
             }
             journal.writeText(record.toString())
             manager.recover()

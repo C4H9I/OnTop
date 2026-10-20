@@ -41,7 +41,7 @@ class NotePercentagesStorageTest {
                 old.execSQL("INSERT INTO reminders(id,cardId,hour,minute,enabled,createdAt,updatedAt) VALUES (4,1,9,0,1,10,20)")
                 old.version = 9
             }
-            db = Room.databaseBuilder(app, OnTopDatabase::class.java, name).addMigrations(OnTopDatabase.MIGRATION_9_10, OnTopDatabase.MIGRATION_10_11).build()
+            db = Room.databaseBuilder(app, OnTopDatabase::class.java, name).addMigrations(OnTopDatabase.MIGRATION_9_10, OnTopDatabase.MIGRATION_10_11, OnTopDatabase.MIGRATION_11_12).build()
             val original = db.cardDao().findById(1)!!
             assertNull(original.progress)
             assertEquals(75, original.importance)

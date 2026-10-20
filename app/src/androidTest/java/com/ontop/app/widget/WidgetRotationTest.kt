@@ -117,7 +117,7 @@ class WidgetRotationTest {
                 old.version = 6
             }
             db = Room.databaseBuilder(context, OnTopDatabase::class.java, name)
-                .addMigrations(OnTopDatabase.MIGRATION_6_7, OnTopDatabase.MIGRATION_7_8, OnTopDatabase.MIGRATION_8_9, OnTopDatabase.MIGRATION_9_10, OnTopDatabase.MIGRATION_10_11).build()
+                .addMigrations(OnTopDatabase.MIGRATION_6_7, OnTopDatabase.MIGRATION_7_8, OnTopDatabase.MIGRATION_8_9, OnTopDatabase.MIGRATION_9_10, OnTopDatabase.MIGRATION_10_11, OnTopDatabase.MIGRATION_11_12).build()
             val card = db.cardDao().findById(7)!!
             assertEquals(CardEntity(7, "Title", "Body", CardSize.WIDE, 100, 200, 3), card)
             db.cardDao().update(card.copy(importance = 100))

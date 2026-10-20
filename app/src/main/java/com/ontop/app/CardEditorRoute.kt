@@ -11,6 +11,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import com.ontop.app.data.CardEntity
 import com.ontop.app.data.CardSize
+import com.ontop.app.data.NoteType
+import com.ontop.app.data.ChecklistItem
+import androidx.compose.material3.MaterialTheme
 import com.ontop.app.reminders.ReminderDraft
 import com.ontop.app.reminders.draft
 import kotlinx.coroutines.CancellationException
@@ -19,7 +22,8 @@ import kotlinx.coroutines.CancellationException
 @Composable
 internal fun CardEditorRoute(card: CardEntity?, state: BoardState, viewModel: BoardViewModel,
     onDismiss: () -> Unit, onSaved: () -> Unit, onDelete: () -> Unit,
-    sharedDraft: com.ontop.app.sharing.IncomingShare? = null, sharedInlinePath: String? = null) {
+    sharedDraft: com.ontop.app.sharing.IncomingShare? = null, sharedInlinePath: String? = null,
+    newNoteType: NoteType = NoteType.NOTE) {
     var initialReminder by rememberSaveable(card?.id) { mutableStateOf<ReminderDraft?>(null) }
     var reminder by rememberSaveable(card?.id) { mutableStateOf<ReminderDraft?>(null) }
     var loaded by rememberSaveable(card?.id) { mutableStateOf(card == null) }
@@ -45,21 +49,23 @@ internal fun CardEditorRoute(card: CardEntity?, state: BoardState, viewModel: Bo
     }
     fun save(draft: PendingNoteSave) {
         viewModel.saveNote(card, draft.title, draft.description, draft.size, reminder, changed, onSaved,
-            draft.formatting, draft.importance, draft.ids, draft.names, draft.progress)
+            draft.formatting, draft.importance, draft.ids, draft.names, draft.progress, draft.noteType, draft.items)
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         requestingPermission = false
         pending?.let { save(it) }
         pending = null
     }
+    MaterialTheme(colorScheme = if ((card?.noteType ?: newNoteType) == NoteType.CHECKLIST) noteReadingColors() else MaterialTheme.colorScheme) {
     CardEditorScreen(card, state.saving || requestingPermission, state.error, state.draftImagePath,
         onImageSelected = viewModel::importImage, onRemoveImage = viewModel::removeDraftImage,
         onInlineImport = viewModel::importInlineImage, onInlineDraftPaths = viewModel::trackInlineDraft,
         onPickerFailed = viewModel::imagePickerFailed, onDismiss = onDismiss,
         onSave = { _, _, _ -> },
         availableTags = state.tags, initialTagIds = state.cardTags.filter { it.cardId == card?.id }.map { it.tagId },
-        onSaveTagged = { title, description, size, formatting, importance, progress, ids, names ->
-            val draft = PendingNoteSave(title, description, size, formatting, importance, progress, ArrayList(ids), ArrayList(names))
+        newNoteType = newNoteType,
+        onSaveChecklist = { title, description, size, formatting, importance, progress, ids, names, type, items ->
+            val draft = PendingNoteSave(title, description, size, formatting, importance, progress, ArrayList(ids), ArrayList(names), type, ArrayList(items))
             if (changed && reminder?.enabled == true && Build.VERSION.SDK_INT >= 33 &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 pending = draft
@@ -70,10 +76,12 @@ internal fun CardEditorRoute(card: CardEntity?, state: BoardState, viewModel: Bo
         onReminders = { reminderOpen = true }, reminderLoadError = loadError, onRetryReminders = { retry++ },
         initialSharedTitle = sharedDraft?.title, initialSharedText = sharedDraft?.text,
         sharedInlinePath = sharedInlinePath)
+    }
     if (reminderOpen) {
         ReminderDraftDialog(reminder, onApply = { reminder = it }, onDismiss = { reminderOpen = false })
     }
 }
 
 private data class PendingNoteSave(val title: String, val description: String, val size: CardSize,
-    val formatting: String?, val importance: Int, val progress: Int?, val ids: ArrayList<Long>, val names: ArrayList<String>) : java.io.Serializable
+    val formatting: String?, val importance: Int, val progress: Int?, val ids: ArrayList<Long>, val names: ArrayList<String>,
+    val noteType: NoteType, val items: ArrayList<ChecklistItem>) : java.io.Serializable

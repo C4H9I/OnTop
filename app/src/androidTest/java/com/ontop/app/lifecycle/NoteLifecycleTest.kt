@@ -119,7 +119,7 @@ class NoteLifecycleTest {
                 old.execSQL("INSERT INTO card_comments VALUES (2,1,'История',30)")
                 old.version = 8
             }
-            db = Room.databaseBuilder(app, OnTopDatabase::class.java, name).addMigrations(OnTopDatabase.MIGRATION_8_9, OnTopDatabase.MIGRATION_9_10, OnTopDatabase.MIGRATION_10_11).build()
+            db = Room.databaseBuilder(app, OnTopDatabase::class.java, name).addMigrations(OnTopDatabase.MIGRATION_8_9, OnTopDatabase.MIGRATION_9_10, OnTopDatabase.MIGRATION_10_11, OnTopDatabase.MIGRATION_11_12).build()
             val original = db.cardDao().findById(1)!!
             assertEquals(CardStatus.ACTIVE, original.status); assertEquals(75, original.importance)
             assertEquals("images/abc.jpg", original.imagePath)

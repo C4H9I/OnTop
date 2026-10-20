@@ -14,7 +14,7 @@ import kotlinx.coroutines.ensureActive
 
 /** One-way analysis schema. Never emits storage paths or the internal formatting JSON. */
 internal object AnalysisJson {
-    const val SCHEMA_VERSION = 2
+    const val SCHEMA_VERSION = 3
     private fun safeId(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     private fun iso(value: Long) = Instant.ofEpochMilli(value).toString()
@@ -35,10 +35,17 @@ internal object AnalysisJson {
                 currentCoroutineContext().ensureActive()
                 val document = RichTextCodec.decode(card.description, card.formatting)
                 json.beginObject().name("id").value(card.id.toString()).name("title").value(card.title)
-                    .name("content").value(document.text).name("importance").value(card.importance.coerceIn(0, 100))
+                    .name("content").value(listOf(document.text, Checklist.text(card.checklistItems()))
+                        .filter { it.isNotBlank() }.joinToString("\n\n")).name("importance").value(card.importance.coerceIn(0, 100))
                     .name("status").value(card.status.name)
                     .name("progress").apply { if (card.progress == null) nullValue() else value(card.progress.toLong()) }
-                    .name("tags").beginArray()
+                    .name("noteType").value(card.noteType.name)
+                    .name("checklist").beginArray()
+                card.checklistItems().forEachIndexed { position, item ->
+                    json.beginObject().name("id").value(item.id).name("text").value(item.text)
+                        .name("done").value(item.done).name("position").value(position).endObject()
+                }
+                json.endArray().name("tags").beginArray()
                 db.tagDao().forCard(card.id).mapNotNull { tags[it]?.name }.distinct().sorted().forEach { json.value(it) }
                 json.endArray().name("createdAt").value(iso(card.createdAt)).name("updatedAt").value(iso(card.updatedAt))
                 json.name("comments").beginArray()

@@ -8,6 +8,7 @@ import com.ontop.app.text.RichTextCodec
 /** Local interaction data only; no network transport or background scheduling. */
 class NoteInteractionRepository(private val db: OnTopDatabase) {
     private val dao get() = db.noteInteractionDao()
+    fun observeStatistics(noteId: Long) = dao.observeStatistics(noteId)
     suspend fun record(noteId: Long, type: NoteInteractionType, timestamp: Long = System.currentTimeMillis()) =
         dao.record(noteId, type, timestamp)
     suspend fun count(noteId: Long, type: NoteInteractionType) = dao.count(noteId, type.name)

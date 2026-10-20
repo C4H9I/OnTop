@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ontop.app.data.CardEntity
+import com.ontop.app.data.*
 import com.ontop.app.data.CardCommentEntity
 import com.ontop.app.data.CardImageStore
 import com.ontop.app.data.CardSize
@@ -277,7 +278,8 @@ class BoardViewModel internal constructor(
         reminder: com.ontop.app.reminders.ReminderDraft?, reminderChanged: Boolean, onSuccess: () -> Unit,
         formatting: String? = if (description == card?.description) card?.formatting else null,
         importance: Int = card?.importance ?: 50, tagIds: List<Long>? = null, newTagNames: List<String> = emptyList(),
-        progress: Int? = card?.progress) {
+        progress: Int? = card?.progress, noteType: NoteType = card?.noteType ?: NoteType.NOTE,
+        checklistItems: List<ChecklistItem> = card?.checklistItems().orEmpty()) {
         if (title.isBlank()) return
         require(importance in 0..100)
         require(progress == null || progress in 0..100)
@@ -295,8 +297,10 @@ class BoardViewModel internal constructor(
                     imagePath = imagePath, formatting = formatting, importance = importance, progress = progress
                 )
             }
+            require(card == null || card.noteType == noteType)
+            val complete = document.copy(noteType = noteType, checklistJson = if (noteType == NoteType.CHECKLIST) Checklist.encode(checklistItems) else null).normalizedChecklist()
             val before = card?.let { interactions.snapshot(it.id) }
-            reminders.saveNote(document, card == null, reminder, reminderChanged, tagIds, newTagNames,
+            reminders.saveNote(complete, card == null, reminder, reminderChanged, tagIds, newTagNames,
                 onSaved = { id -> interactions.recordEditIfChanged(before, id) })
             val oldInline = card?.let { RichTextCodec.decode(it.description, it.formatting).imagePaths() }.orEmpty()
             (oldInline + inlineDraftPaths).forEach { removeImage(it) }
@@ -318,6 +322,19 @@ class BoardViewModel internal constructor(
             }
             refreshWidgets(id)
         }
+    }
+
+    internal fun toggleChecklistItem(id: Long, itemId: String) = write({}) {
+        database.withTransaction {
+            val card = dao.findById(id) ?: error("Заметка недоступна")
+            check(card.noteType == NoteType.CHECKLIST && card.status != com.ontop.app.data.CardStatus.TRASHED)
+            val before = interactions.snapshot(id)
+            val items = card.checklistItems().map { if (it.id == itemId) it.copy(done = !it.done) else it }
+            check(items != card.checklistItems())
+            check(dao.update(card.copy(checklistJson = Checklist.encode(items), updatedAt = System.currentTimeMillis())) == 1)
+            interactions.recordEditIfChanged(before, id)
+        }
+        refreshWidgets(id)
     }
 
     internal fun changeStatus(card: CardEntity, status: com.ontop.app.data.CardStatus, onSuccess: () -> Unit) = write(onSuccess) {

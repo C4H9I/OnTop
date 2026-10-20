@@ -26,6 +26,8 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.flowWithLifecycle
 import com.ontop.app.data.CardEntity
+import com.ontop.app.data.NoteType
+import com.ontop.app.data.checklistItems
 import com.ontop.app.data.CardStatus
 import com.ontop.app.data.CardCommentEntity
 import com.ontop.app.data.ReminderEntity
@@ -55,6 +57,7 @@ internal fun CardDetailsDialog(
     var sharing by remember(card.id) { mutableStateOf(false) }
     var reminderOpen by rememberSaveable(card.id) { mutableStateOf(false) }
     var percentagesOpen by rememberSaveable(card.id) { mutableStateOf(false) }
+    var statisticsOpen by rememberSaveable(card.id) { mutableStateOf(false) }
     var reminderLoaded by remember(card.id) { mutableStateOf(false) }
     var reminderError by remember(card.id) { mutableStateOf(false) }
     val reminderFlow = remember(card.id, viewModel, lifecycle) {
@@ -109,6 +112,8 @@ internal fun CardDetailsDialog(
                 onDeleteComment = viewModel::deleteComment, onDismiss = onDismiss, onEdit = onEdit,
                 onReminder = { reminderOpen = true }, reminderStatus = reminderStatus,
                 onPercentages = { viewModel.clearError(); percentagesOpen = true },
+                onStatistics = { statisticsOpen = true },
+                onChecklistToggle = { viewModel.toggleChecklistItem(card.id, it) },
                 tags = state.tags.filter { tag -> state.cardTags.any { it.cardId == card.id && it.tagId == tag.id } },
                 onArchive = { viewModel.changeStatus(card, CardStatus.ARCHIVED, onDismiss) },
                 onRestore = { viewModel.changeStatus(card, CardStatus.ACTIVE, onDismiss) },
@@ -133,10 +138,12 @@ internal fun CardDetailsDialog(
     if (reminderOpen) key(card.id) {
         ReminderSettingsDialog(card.id, viewModel) { reminderOpen = false }
     }
+    if (statisticsOpen) NoteStatisticsSheet(card.id, card.updatedAt,
+        viewModel.interactions, lifecycle, onDismiss = { statisticsOpen = false })
     if (percentagesOpen) NotePercentagesDialog(card.id, card.importance, card.progress,
         onDismiss = { percentagesOpen = false },
         onSave = { importance, progress -> viewModel.savePercentages(card.id, importance, progress) { percentagesOpen = false } },
-        saving = state.saving, error = state.error)
+        saving = state.saving, error = state.error, automaticProgress = card.noteType == NoteType.CHECKLIST)
 }
 
 @Composable
@@ -158,7 +165,9 @@ internal fun CardDetailsContent(
     onArchive: (() -> Unit)? = null, onRestore: (() -> Unit)? = null,
     onTrash: (() -> Unit)? = null, onPermanentDelete: (() -> Unit)? = null,
     onPercentages: (() -> Unit)? = null,
-    tags: List<TagEntity> = emptyList()
+    tags: List<TagEntity> = emptyList(),
+    onStatistics: (() -> Unit)? = null,
+    onChecklistToggle: ((String) -> Unit)? = null
 ) {
     var menu by remember { mutableStateOf(false) }
     var confirmPermanent by rememberSaveable(card.id) { mutableStateOf(false) }
@@ -211,8 +220,12 @@ internal fun CardDetailsContent(
                 IconButton(onClick = onDismiss, enabled = !saving) {
                     Icon(painterResource(R.drawable.ic_back), contentDescription = "Закрыть карточку")
                 }
-                TextButton(onClick = onEdit, enabled = !saving && card.status != CardStatus.TRASHED, modifier = Modifier.weight(1f)) {
-                    Text("Редактировать")
+                TextButton(onClick = onEdit, enabled = !saving && card.status != CardStatus.TRASHED,
+                    contentPadding = PaddingValues(horizontal = 4.dp), modifier = Modifier.weight(1f)) {
+                    Text("Редактировать", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+                if (onStatistics != null) IconButton(onClick = onStatistics) {
+                    Icon(painterResource(R.drawable.ic_statistics), contentDescription = "Статистика заметки")
                 }
                 if (onShare != null) IconButton(onClick = onShare, enabled = !saving && !sharing,
                     modifier = Modifier.testTag("share-note")) {
@@ -253,6 +266,7 @@ internal fun CardDetailsContent(
                             enabled = !saving && card.status != CardStatus.TRASHED, onClick = onPercentages,
                             modifier = Modifier.padding(bottom = 12.dp))
                         NoteReadingTitle(card.title, Modifier.testTag("details-title"))
+                        if (card.noteType == NoteType.CHECKLIST) ChecklistCounter(card.checklistItems())
                         val document = RichTextCodec.decode(card.description, card.formatting)
                         if (document.media.isNotEmpty()) MultimediaNoteView(document)
                         else if (card.description.isNotBlank()) {
@@ -267,6 +281,10 @@ internal fun CardDetailsContent(
                                 style = MaterialTheme.typography.bodyMedium)
                         }
                     }
+                }
+                items(card.checklistItems(), key = { "checklist-${it.id}" }) { item ->
+                    ChecklistViewRow(item, !saving && card.status != CardStatus.TRASHED && onChecklistToggle != null,
+                        onToggle = { onChecklistToggle?.invoke(item.id) })
                 }
                 item(key = "history-heading") {
                     Column(Modifier.padding(top = 24.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

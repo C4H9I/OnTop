@@ -1,6 +1,7 @@
 package com.ontop.app.data
 
 import androidx.room.*
+import kotlinx.coroutines.flow.Flow
 
 enum class NoteInteractionType {
     NOTE_OPENED, SLIDER_VIEWED, NOTE_EDITED, COMMENT_ADDED, WIDGET_OPENED;
@@ -15,8 +16,27 @@ data class NoteInteractionEntity(@PrimaryKey(autoGenerate = true) val id: Long =
 
 data class NoteInteractionAggregate(val noteId: Long, val eventType: String, val count: Long, val lastAt: Long)
 
+data class NoteInteractionStatistics(
+    val opened: Long = 0, val slider: Long = 0, val widget: Long = 0,
+    val comments: Long = 0, val edited: Long = 0, val events: Long = 0,
+    val lastOpenedAt: Long? = null
+) {
+    val intentionalVisits: Long get() = opened + slider + widget
+}
+
 @Dao
 abstract class NoteInteractionDao {
+    @Query("""SELECT
+        COALESCE(SUM(CASE WHEN eventType = 'NOTE_OPENED' THEN 1 ELSE 0 END), 0) AS opened,
+        COALESCE(SUM(CASE WHEN eventType = 'SLIDER_VIEWED' THEN 1 ELSE 0 END), 0) AS slider,
+        COALESCE(SUM(CASE WHEN eventType = 'WIDGET_OPENED' THEN 1 ELSE 0 END), 0) AS widget,
+        COALESCE(SUM(CASE WHEN eventType = 'COMMENT_ADDED' THEN 1 ELSE 0 END), 0) AS comments,
+        COALESCE(SUM(CASE WHEN eventType = 'NOTE_EDITED' THEN 1 ELSE 0 END), 0) AS edited,
+        COUNT(*) AS events,
+        MAX(CASE WHEN eventType IN ('NOTE_OPENED','SLIDER_VIEWED','WIDGET_OPENED') THEN timestamp END) AS lastOpenedAt
+        FROM note_interactions WHERE noteId = :noteId""")
+    abstract fun observeStatistics(noteId: Long): Flow<NoteInteractionStatistics>
+
     @Insert abstract suspend fun insert(event: NoteInteractionEntity): Long
     @Query("SELECT COUNT(*) FROM note_interactions WHERE noteId = :noteId AND eventType = :type")
     abstract suspend fun count(noteId: Long, type: String): Long

@@ -31,6 +31,10 @@ import androidx.compose.ui.semantics.semantics
 import com.ontop.app.data.CardEntity
 import com.ontop.app.data.CardSize
 import com.ontop.app.data.TagEntity
+import com.ontop.app.data.*
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.geometry.Rect
 import com.ontop.app.text.*
 
 /** One editor route for both creation and updates; persistence stays in BoardViewModel. */
@@ -58,21 +62,28 @@ internal fun CardEditorScreen(
     onSaveWithImportance: ((String, String, CardSize, String?, Int) -> Unit)? = null,
     availableTags: List<TagEntity> = emptyList(), initialTagIds: List<Long> = emptyList(),
     onSaveTagged: ((String, String, CardSize, String?, Int, Int?, List<Long>, List<String>) -> Unit)? = null,
-    initialSharedTitle: String? = null, initialSharedText: String? = null, sharedInlinePath: String? = null
+    initialSharedTitle: String? = null, initialSharedText: String? = null, sharedInlinePath: String? = null,
+    newNoteType: NoteType = NoteType.NOTE,
+    onSaveChecklist: ((String, String, CardSize, String?, Int, Int?, List<Long>, List<String>, NoteType, List<ChecklistItem>) -> Unit)? = null
 ) {
+    val editorKey = card?.id
     // Capture the initial values once: a Room emission must not reset an active draft.
-    val initialTitle = rememberSaveable(card?.id) { card?.title ?: initialSharedTitle.orEmpty() }
-    val initialDescription = rememberSaveable(card?.id) { card?.description ?: initialSharedText.orEmpty() }
-    val initialDocument = rememberSaveable(card?.id) {
+    val initialTitle = rememberSaveable(editorKey) { card?.title ?: initialSharedTitle.orEmpty() }
+    val initialDescription = rememberSaveable(editorKey) { card?.description ?: initialSharedText.orEmpty() }
+    val initialDocument = rememberSaveable(editorKey) {
         RichTextCodec.decode(initialDescription, card?.formatting).let {
             if (card == null && initialSharedText != null) it.convertYouTubeLinks() else it
         }
     }
-    val initialSize = rememberSaveable(card?.id) { card?.size ?: CardSize.NORMAL }
-    val initialImage by rememberSaveable(card?.id) { mutableStateOf(card?.imagePath) }
-    var title by rememberSaveable(card?.id) { mutableStateOf(initialTitle) }
-    var document by rememberSaveable(card?.id) { mutableStateOf(initialDocument) }
-    var sharedImageInserted by rememberSaveable(card?.id) { mutableStateOf(false) }
+    val initialSize = rememberSaveable(editorKey) { card?.size ?: CardSize.NORMAL }
+    val noteType = card?.noteType ?: newNoteType
+    val initialItems = rememberSaveable(editorKey) { ArrayList(card?.checklistItems().orEmpty()) }
+    var checklist by rememberSaveable(editorKey) { mutableStateOf(initialItems) }
+    var checklistViewport by remember { mutableStateOf(Rect.Zero) }
+    val initialImage by rememberSaveable(editorKey) { mutableStateOf(card?.imagePath) }
+    var title by rememberSaveable(editorKey) { mutableStateOf(initialTitle) }
+    var document by rememberSaveable(editorKey) { mutableStateOf(initialDocument) }
+    var sharedImageInserted by rememberSaveable(editorKey) { mutableStateOf(false) }
     LaunchedEffect(sharedInlinePath) {
         if (sharedInlinePath != null && !sharedImageInserted) {
             document = document.copy(media = document.media + NoteMedia(offset = document.text.length,
@@ -82,40 +93,40 @@ internal fun CardEditorScreen(
         }
     }
     val description = document.text
-    var size by rememberSaveable(card?.id) { mutableStateOf(initialSize) }
-    val initialPercentages = rememberSaveable(card?.id) { NotePercentages(card?.importance ?: 50, card?.progress) }
-    var percentages by rememberSaveable(card?.id) { mutableStateOf(initialPercentages) }
+    var size by rememberSaveable(editorKey) { mutableStateOf(initialSize) }
+    val initialPercentages = rememberSaveable(editorKey) { NotePercentages(card?.importance ?: 50, card?.progress) }
+    var percentages by rememberSaveable(editorKey) { mutableStateOf(initialPercentages) }
     val importance = percentages.importance
-    val progress = percentages.progress
-    var percentagesOpen by rememberSaveable(card?.id) { mutableStateOf(false) }
-    val topics = rememberEditorTopics(card?.id, initialTagIds)
-    var confirmDiscard by rememberSaveable(card?.id) { mutableStateOf(false) }
-    var confirmDelete by rememberSaveable(card?.id) { mutableStateOf(false) }
-    var displayOpen by rememberSaveable(card?.id) { mutableStateOf(false) }
-    var otherOpen by rememberSaveable(card?.id) { mutableStateOf(false) }
-    var focusRequested by rememberSaveable(card?.id) { mutableStateOf(false) }
+    val progress = if (noteType == NoteType.CHECKLIST) Checklist.progress(checklist) else percentages.progress
+    var percentagesOpen by rememberSaveable(editorKey) { mutableStateOf(false) }
+    val topics = rememberEditorTopics(editorKey, initialTagIds)
+    var confirmDiscard by rememberSaveable(editorKey) { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable(editorKey) { mutableStateOf(false) }
+    var displayOpen by rememberSaveable(editorKey) { mutableStateOf(false) }
+    var otherOpen by rememberSaveable(editorKey) { mutableStateOf(false) }
+    var focusRequested by rememberSaveable(editorKey) { mutableStateOf(false) }
     val titleFocus = remember { FocusRequester() }
-    val rootController = remember(card?.id) { NativeRichController() }
-    var bodyController by remember(card?.id) { mutableStateOf(rootController) }
-    var activePiece by rememberSaveable(card?.id) { mutableStateOf("body") }
-    var pendingInsert by rememberSaveable(card?.id) { mutableStateOf(MediaInsertPoint("body", 0)) }
-    var focusAfter by rememberSaveable(card?.id) { mutableStateOf<MediaInsertPoint?>(null) }
-    var videoDialog by rememberSaveable(card?.id) { mutableStateOf(false) }
-    var pastedVideo by rememberSaveable(card?.id) { mutableStateOf<VideoPaste?>(null) }
+    val rootController = remember(editorKey) { NativeRichController() }
+    var bodyController by remember(editorKey) { mutableStateOf(rootController) }
+    var activePiece by rememberSaveable(editorKey) { mutableStateOf("body") }
+    var pendingInsert by rememberSaveable(editorKey) { mutableStateOf(MediaInsertPoint("body", 0)) }
+    var focusAfter by rememberSaveable(editorKey) { mutableStateOf<MediaInsertPoint?>(null) }
+    var videoDialog by rememberSaveable(editorKey) { mutableStateOf(false) }
+    var pastedVideo by rememberSaveable(editorKey) { mutableStateOf<VideoPaste?>(null) }
     var bodyFocused by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     val formScroll = rememberScrollState()
     val dismissKeyboard = { focus.clearFocus(); bodyController.view?.clearFocus(); keyboard?.hide(); Unit }
     val changed = title != initialTitle || document != initialDocument ||
-        size != initialSize || imagePath != initialImage || reminderChanged || percentages != initialPercentages || topics.changed
+        size != initialSize || imagePath != initialImage || reminderChanged || percentages != initialPercentages || topics.changed || checklist != initialItems
     val leave = {
         if (!saving) {
             if (changed) confirmDiscard = true else onDismiss()
         }
     }
     BackHandler { leave() }
-    LaunchedEffect(card?.id) {
+    LaunchedEffect(editorKey) {
         if (card == null && !focusRequested) {
             titleFocus.requestFocus()
             keyboard?.show()
@@ -147,11 +158,19 @@ internal fun CardEditorScreen(
         catch (_: Exception) { onPickerFailed() }
     }
     val imeOpen = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
-    val saveDocument = {
-        if (onSaveTagged != null) onSaveTagged(title, description, size, RichTextCodec.encode(document), importance, progress, topics.ids.toList(), topics.names.toList())
-        else if (onSaveWithImportance != null) onSaveWithImportance(title, description, size, RichTextCodec.encode(document), importance)
-        else if (onSaveFormatted != null) onSaveFormatted(title, description, size, RichTextCodec.encode(document))
-        else onSave(title, description, size)
+    fun saveDocument() {
+        onSaveChecklist?.let { save ->
+            save(title, description, size, RichTextCodec.encode(document), importance, progress,
+                topics.ids.toList(), topics.names.toList(), noteType, Checklist.clean(checklist))
+            return
+        }
+        onSaveTagged?.let { save ->
+            save(title, description, size, RichTextCodec.encode(document), importance, progress, topics.ids.toList(), topics.names.toList())
+            return
+        }
+        onSaveWithImportance?.let { save -> save(title, description, size, RichTextCodec.encode(document), importance); return }
+        onSaveFormatted?.let { save -> save(title, description, size, RichTextCodec.encode(document)); return }
+        onSave(title, description, size)
     }
 
     Surface(modifier.fillMaxSize().testTag("card-editor"), color = MaterialTheme.colorScheme.background) {
@@ -160,19 +179,19 @@ internal fun CardEditorScreen(
                 IconButton(onClick = leave, enabled = !saving) {
                     Icon(painterResource(R.drawable.ic_back), contentDescription = "Назад")
                 }
-                Text(if (card == null) "Новая заметка" else "Редактирование",
+                Text(if (card != null) "Редактирование" else if (noteType == NoteType.CHECKLIST) "Новый чек-лист" else "Новая заметка",
                     style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 IconButton(onClick = chooseImage, enabled = !saving) {
                     Icon(painterResource(R.drawable.ic_cover), contentDescription = "Выбрать обложку")
                 }
-                IconButton(onClick = saveDocument,
+                IconButton(onClick = { saveDocument() },
                     enabled = !saving && remindersReady && title.isNotBlank(), modifier = Modifier.testTag("editor-save")) {
                     if (saving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                     else Icon(painterResource(R.drawable.ic_check), contentDescription = "Сохранить заметку")
                 }
             }
             Column(
-                Modifier.weight(1f).fillMaxWidth().verticalScroll(formScroll)
+                Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { checklistViewport = it.boundsInRoot() }.verticalScroll(formScroll)
                     .padding(horizontal = 24.dp, vertical = 20.dp).testTag("editor-fields"),
                 verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
@@ -197,7 +216,11 @@ internal fun CardEditorScreen(
                         if (focused) { activePiece = key; bodyController = controller; bodyFocused = true }
                         else if (bodyController === controller) bodyFocused = false
                     }, focusAfter = focusAfter, onFocusHandled = { focusAfter = null },
-                    onMoveCursor = { focusAfter = it }, onPaste = { pastedVideo = it })
+                    onMoveCursor = { focusAfter = it }, onPaste = { pastedVideo = it },
+                    minimumLines = if (noteType == NoteType.CHECKLIST) 2 else 12,
+                    placeholder = if (noteType == NoteType.CHECKLIST) "Описание (необязательно)" else "О чём хочется помнить?")
+                if (noteType == NoteType.CHECKLIST) ChecklistEditor(checklist, { checklist = ArrayList(it) },
+                    !saving, formScroll, checklistViewport)
             }
             if (reminderLoadError != null) {
                 Text(reminderLoadError, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
@@ -253,9 +276,10 @@ internal fun CardEditorScreen(
         onDelete = { otherOpen = false; confirmDelete = true }, onClose = { otherOpen = false })
     if (topics.open) TagPickerDialog(availableTags, topics.ids, topics.names, !saving,
         onChange = { ids, names -> topics.ids = ids; topics.names = names }, onClose = { topics.open = false })
-    if (percentagesOpen) NotePercentagesDialog(card?.id ?: 0L, importance, progress,
+    if (percentagesOpen) NotePercentagesDialog(editorKey ?: 0L, importance, progress,
         onDismiss = { percentagesOpen = false },
-        onSave = { newImportance, newProgress -> percentages = NotePercentages(newImportance, newProgress); percentagesOpen = false })
+        onSave = { newImportance, newProgress -> percentages = NotePercentages(newImportance, newProgress); percentagesOpen = false },
+        automaticProgress = noteType == NoteType.CHECKLIST)
     if (confirmDiscard) {
         AlertDialog(onDismissRequest = { confirmDiscard = false }, title = { Text("Отменить изменения?") },
             confirmButton = {

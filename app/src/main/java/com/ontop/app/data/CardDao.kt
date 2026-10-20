@@ -26,12 +26,16 @@ abstract class CardDao {
     abstract fun observeAllCards(): Flow<List<CardEntity>>
 
     @Insert
-    abstract suspend fun insert(card: CardEntity): Long
+    protected abstract suspend fun insertRaw(card: CardEntity): Long
+
+    open suspend fun insert(card: CardEntity): Long = insertRaw(card.normalizedChecklist())
 
     @Update
-    abstract suspend fun update(card: CardEntity): Int
+    protected abstract suspend fun updateRaw(card: CardEntity): Int
 
-    @Query("UPDATE cards SET importance = :importance, progress = :progress, updatedAt = :updatedAt WHERE id = :id AND status != 'TRASHED'")
+    open suspend fun update(card: CardEntity): Int = updateRaw(card.normalizedChecklist())
+
+    @Query("UPDATE cards SET importance = :importance, progress = CASE WHEN noteType = 'CHECKLIST' THEN progress ELSE :progress END, updatedAt = :updatedAt WHERE id = :id AND status != 'TRASHED'")
     abstract suspend fun updatePercentages(id: Long, importance: Int, progress: Int?, updatedAt: Long): Int
 
     @Delete

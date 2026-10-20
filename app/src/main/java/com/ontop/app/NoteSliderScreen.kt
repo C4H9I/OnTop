@@ -13,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.ontop.app.data.CardEntity
+import com.ontop.app.data.NoteType
+import com.ontop.app.data.checklistItems
 import com.ontop.app.data.TagEntity
 import com.ontop.app.data.CardTagCrossRef
 import com.ontop.app.text.MultimediaNoteView
@@ -65,7 +67,7 @@ internal fun NoteSliderScreen(cards: List<CardEntity>, session: NoteSliderSessio
     saving: Boolean = false, error: String? = null, onClearError: () -> Unit = {},
     onSavePercentages: (Long, Int, Int?, () -> Unit) -> Unit = { _, _, _, done -> done() },
     tags: List<TagEntity> = emptyList(), cardTags: List<CardTagCrossRef> = emptyList(),
-    onSliderViewed: (Long) -> Unit = {}) {
+    onSliderViewed: (Long) -> Unit = {}, onChecklistToggle: (Long, String) -> Unit = { _, _ -> }) {
     BackHandler(onBack = onClose)
     val ordered = session.ordered(cards)
     var menu by remember { mutableStateOf(false) }
@@ -73,7 +75,7 @@ internal fun NoteSliderScreen(cards: List<CardEntity>, session: NoteSliderSessio
     cards.firstOrNull { it.id == percentNoteId }?.let { note ->
         NotePercentagesDialog(note.id, note.importance, note.progress, onDismiss = { percentNoteId = null },
             onSave = { importance, progress -> onSavePercentages(note.id, importance, progress) { percentNoteId = null } },
-            saving = saving, error = error)
+            saving = saving, error = error, automaticProgress = note.noteType == NoteType.CHECKLIST)
     }
     // Recreate only on membership/order changes, keeping the selected identity (or nearest neighbour).
     key(ordered.map { it.id }) {
@@ -141,6 +143,10 @@ internal fun NoteSliderScreen(cards: List<CardEntity>, session: NoteSliderSessio
                     NoteReadingTitle(card.title, Modifier.testTag("slide-title-${card.id}"))
                     MultimediaNoteView(RichTextCodec.decode(card.description, card.formatting),
                         active = page == pager.currentPage && !pager.isScrollInProgress)
+                    if (card.noteType == NoteType.CHECKLIST) {
+                        ChecklistCounter(card.checklistItems())
+                        card.checklistItems().forEach { item -> ChecklistViewRow(item, !saving) { onChecklistToggle(card.id, item.id) } }
+                    }
                 }
             }
         }

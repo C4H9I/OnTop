@@ -1632,3 +1632,128 @@ Room и KSP подключены без изменения версий Kotlin, 
 - Периодическая/ручная ротация проверена вызовами существующего механизма выбора, без ожидания 30 минут/Doze в реальном лаунчере. Расписание и алгоритм ротации не менялись.
 - История не очищается автоматически. Сохраняются прежние ограничения backup (в частности data.json до 32 MiB); очень большая история может потребовать увеличения/потоковой доработки формата в будущем. События не обрезаются молча. Старые приложения не читают .ontop v5.
 - Полный набор всех инструментальных тестов проекта не запускался. Git commit/push не выполнялись.
+
+## Этап 15.2 — статистика внимания к заметке (20.10.2026)
+
+Реализовано:
+
+- В верхней панели просмотра добавлена компактная иконка с описанием «Статистика заметки». Она открывает ModalBottomSheet «Статистика внимания»; состояние открытия сохраняется при пересоздании Activity и повороте. Подпись существующей кнопки редактирования ограничена одной строкой, чтобы все действия помещались на узком экране.
+- Панель показывает пять отдельных счётчиков событий этапа 15.1, сумму NOTE_OPENED + SLIDER_VIEWED + WIDGET_OPENED, последнее обращение и фактическое updatedAt заметки. COMMENT_ADDED означает зарегистрированные добавления, независимо от текущего числа комментариев. Автоматические показы виджета не учитываются.
+- NoteInteractionDao выполняет один агрегирующий SELECT с SUM(CASE), COUNT и MAX(CASE) по noteId. Repository предоставляет Flow; история целиком не загружается. Сбор данных приостановлен вне активного жизненного цикла, при закрытии панели подписка отменяется.
+- Предусмотрены загрузка, пустая история с нулевыми значениями, данные и ошибка с повторной попыткой. Без событий обращения дата — «Нет данных». Даты форматируются в часовом поясе устройства. Панель объясняет, что история доступна только с этапа 15.1, а нули не означают отсутствия интереса.
+- Светлая поверхность без декоративных карточек; вертикальная прокрутка, перенос подписей и системный размер шрифта. Открытие/закрытие статистики ничего не записывает и не меняет updatedAt.
+- Room остаётся версии 11; таблицы, регистрация событий, .ontop v5, аналитический JSON, напоминания и алгоритм ротации не изменены. Новых зависимостей нет.
+
+Созданы:
+
+- app/src/main/java/com/ontop/app/NoteStatisticsSheet.kt
+- app/src/main/res/drawable/ic_statistics.xml
+- app/src/androidTest/java/com/ontop/app/NoteStatisticsTest.kt
+- app/src/androidTest/java/com/ontop/app/NoteStatisticsActivityTest.kt
+
+Изменены:
+
+- app/src/main/java/com/ontop/app/CardDetailsDialog.kt
+- app/src/main/java/com/ontop/app/data/NoteInteractionEntity.kt (проекция статистики и DAO-запрос, без изменения Entity/схемы)
+- app/src/main/java/com/ontop/app/data/NoteInteractionRepository.kt
+- PROJECT_STATUS.md
+
+Фактически выполненные проверки:
+
+- :app:assembleDebug, :app:testDebugUnitTest, :app:assembleDebugAndroidTest — BUILD SUCCESSFUL; финальная общая сборка 13 с. JVM: 82 теста, 0 ошибок. Первый запуск был остановлен sandbox на доступе к кэшу Gradle; сборка повторена с разрешённым доступом.
+- Эмулятор Medium_Phone, Android 17/API 37, только emulator-5554: новая функция — OK (6 tests), 30.076 с; итоговый совместный прогон — OK (43 tests), 99.504 с. Логи: app/build/verification/step-15-2/statistics-tests.txt и final-tests.txt.
+- Новые тесты проверяют пустую историю, все пять типов, независимость заметок, несколько открытий, сумму обращений, MAX только среди открытий, реактивное обновление, отсутствие подмены COMMENT_ADDED числом комментариев, локальное форматирование дат, состояния загрузки/ошибки и повторную попытку. Компоновки 360 dp со шрифтом 200% и 393 dp проверены через Compose; действия верхней панели доступны при крупном шрифте.
+- Проверка настоящего MainActivity: панель поверх экрана просмотра, пустые значения/«Нет данных», обновление после нового события, пересоздание Activity, поворот landscape → portrait, закрытие и повторное открытие. Сохранены ровно введённые тестом события, updatedAt не изменился. Скриншот панели просмотрен: app/build/verification/step-15-2/note-statistics/sheet.png.
+- Итоговые 43 теста включают NoteStatisticsTest (5), NoteStatisticsActivityTest (1), NoteInteractionTest (4), NoteInteractionFlowTest (3), CardDetailsDesignTest (6), WidgetInteractionActivityTest (1), BackupTest (14), AnalysisExportTest (9). Проверены прежние открытия с доски/слайдера/виджета, комментарии и редактирование, backup/restore и аналитический экспорт.
+- Во время подготовки были сбои тестовой обвязки: нестабильный жизненный цикл изолированного экрана оставлял загрузку приостановленной; его сценарий перенесён в настоящий MainActivity. Выбор скриншота уточнён для двух Dialog-окон. В промежуточном общем прогоне прежний тест удаления комментария не нашёл кнопку; в итоговом прогоне все шесть CardDetailsDesignTest прошли. Не заявляем, что промежуточные прогоны были успешными.
+- git diff --check — без ошибок. APK: app/build/outputs/apk/debug/app-debug.apk.
+
+Ограничения:
+
+- Физический телефон не использовался и не изменялся. Остаётся ручная проверка на конкретном устройстве: TalkBack, системные размеры шрифта/масштаб интерфейса, жесты закрытия панели и поведение производителя Android. Проверки ширины выполнены ограничением Compose-контейнера; реальное устройство 360–393 dp не проверялось.
+- Ошибка чтения проверена через состояние компонента; реальный сбой диска/повреждение базы не воспроизводились. Принудительное завершение процесса с открытой панелью не проверялось. Полный набор всех Android-тестов проекта не запускался.
+- Git commit и push не выполнялись.
+
+## Чек-листы — 20.10.2026
+
+Реализовано:
+
+- На доске две отдельные нижние кнопки: создание обычной заметки (лист с плюсом) и чек-листа (список с чекбоксами). Кнопки имеют описания для доступности и стандартные области нажатия. Нижняя панель занимает собственное место в Scaffold, учитывает системную навигацию и не накладывается на плитки.
+- NoteType.NOTE и NoteType.CHECKLIST используют общую CardEntity: заголовок, форматированное описание с мультимедиа, обложку, важность, темы, комментарии, напоминания, архив и корзину. Преобразования между типами нет.
+- Пункты хранятся структурированным JSON-массивом в checklistJson той же карточки. Это соответствует существующему подходу с JSON форматированного документа и позволяет атомарно сохранять весь список вместе с заметкой. У каждого пункта стабильный UUID, текст, done и явная position; порядок массива канонизируется при записи. Удаление карточки удаляет и принадлежащие ей пункты без отдельной очистки связей.
+- Редактор показывает счётчик, верхнее и нижнее действия «Добавить пункт», текстовые поля, удаление и отдельные захваты перетаскивания. Верхнее действие вставляет в начало, нижнее — в конец; новый пункт получает фокус и запрос клавиатуры. Захват самостоятельно обрабатывает жесты, прокручивает длинную форму у края и не перехватывает чекбокс. Выполненные пункты не перемещаются автоматически.
+- В просмотре и слайдере доступны чекбоксы; выполненный текст зачёркнут и менее контрастен. Переключение читает актуальную карточку и сохраняет пункты/готовность в одной транзакции, обновляет виджеты и регистрирует существующее NOTE_EDITED. Новых типов статистических событий нет.
+- Готовность чек-листа: round(100 × выполнено / число непустых пунктов), пустой список — 0. Пустые черновые строки не сохраняются и не считаются. Добавление/удаление/переключение обновляет расчёт, перестановка не влияет. CardDao централизованно нормализует список и progress при insert/update; updatePercentages защищает готовность чек-листа от ручной перезаписи.
+- Существующие индикаторы и сортировка используют одно сохранённое progress. В диалоге процентов чек-листа скрыты ручные регуляторы готовности и показано «Рассчитывается по выполненным пунктам»; важность остаётся ручной. У обычных заметок прежняя ручная готовность, включая null, сохранена. При 100% статус не меняется.
+- Новый редактор чек-листа имеет белый фон и компактное необязательное описание, без дополнительных серых подложек. Обычный мультимедийный редактор сохраняет прежние размеры и возможности. Для устранения затянувшегося анализа компилятором повторный ключ редактора вынесен в локальную переменную, а обработчик сохранения — в локальную функцию; версии инструментов не менялись.
+
+Миграция и форматы:
+
+- Room 12, явная MIGRATION_11_12: только добавление noteType TEXT NOT NULL DEFAULT 'NOTE' и nullable checklistJson. Существующие ID, содержимое и progress не меняются; destructive migration отсутствует. Добавлена схема 12.json и продолжены цепочки миграций в тестах.
+- Резервная копия .ontop версии 6 содержит noteType и checklist (id/text/done/position). Читаются версии 1–5 без новых полей: обычная заметка с прежней готовностью. Восстановление пересчитывает готовность чек-листа, сохраняя ID пунктов и порядок. Версия fingerprint журнала восстановления — 6; поддержаны журналы 1–5.
+- Аналитический JSON schemaVersion 3 содержит тип, структурированные пункты и читаемое представление в content. Отправка через «Поделиться» содержит заголовок, описание и строки [x]/[ ]; локальные изображения передаются прежним способом.
+- FIXED и ROTATION показывают заголовок и первые три пункта с отметками. Алгоритм взвешенного выбора, темы и WorkManager не менялись; готовность не влияет на веса ротации.
+
+Созданы:
+
+- app/src/main/java/com/ontop/app/data/Checklist.kt
+- app/src/main/java/com/ontop/app/ChecklistContent.kt
+- app/src/main/res/drawable/ic_add_note.xml
+- app/src/main/res/drawable/ic_checklist.xml
+- app/src/main/res/drawable/ic_delete.xml
+- app/src/main/res/drawable/ic_drag_handle.xml
+- app/schemas/com.ontop.app.data.OnTopDatabase/12.json
+- app/src/test/java/com/ontop/app/ChecklistProgressTest.kt
+- app/src/androidTest/java/com/ontop/app/ChecklistStorageTest.kt
+- app/src/androidTest/java/com/ontop/app/ChecklistEditorTest.kt
+
+Изменены в этой задаче:
+
+- app/src/main/java/com/ontop/app/data/CardEntity.kt
+- app/src/main/java/com/ontop/app/data/CardDao.kt
+- app/src/main/java/com/ontop/app/data/OnTopDatabase.kt
+- app/src/main/java/com/ontop/app/BoardScreen.kt
+- app/src/main/java/com/ontop/app/BoardViewModel.kt
+- app/src/main/java/com/ontop/app/CardEditorRoute.kt
+- app/src/main/java/com/ontop/app/CardEditorScreen.kt
+- app/src/main/java/com/ontop/app/CardDetailsDialog.kt
+- app/src/main/java/com/ontop/app/NotePercentagesDialog.kt
+- app/src/main/java/com/ontop/app/NoteSliderScreen.kt
+- app/src/main/java/com/ontop/app/text/MultimediaEditor.kt
+- app/src/main/java/com/ontop/app/backup/BackupFormat.kt
+- app/src/main/java/com/ontop/app/backup/BackupManager.kt
+- app/src/main/java/com/ontop/app/analysis/AnalysisJson.kt
+- app/src/main/java/com/ontop/app/sharing/OutgoingShare.kt
+- app/src/main/java/com/ontop/app/widget/CardWidget.kt
+- app/src/androidTest/java/com/ontop/app/NotePercentagesStorageTest.kt
+- app/src/androidTest/java/com/ontop/app/analysis/AnalysisExportTest.kt
+- app/src/androidTest/java/com/ontop/app/backup/BackupTest.kt
+- app/src/androidTest/java/com/ontop/app/backup/TagBackupTest.kt
+- app/src/androidTest/java/com/ontop/app/data/CardCommentDaoTest.kt
+- app/src/androidTest/java/com/ontop/app/data/CardImageTest.kt
+- app/src/androidTest/java/com/ontop/app/data/NoteInteractionTest.kt
+- app/src/androidTest/java/com/ontop/app/data/TagDaoTest.kt
+- app/src/androidTest/java/com/ontop/app/lifecycle/NoteLifecycleTest.kt
+- app/src/androidTest/java/com/ontop/app/reminders/ReminderMigrationTest.kt
+- app/src/androidTest/java/com/ontop/app/reminders/FlexibleReminderMigrationTest.kt
+- app/src/androidTest/java/com/ontop/app/text/RichTextMigrationTest.kt
+- app/src/androidTest/java/com/ontop/app/widget/WidgetRotationTest.kt
+- PROJECT_STATUS.md
+
+Фактически выполненные проверки:
+
+- :app:assembleDebug, :app:testDebugUnitTest, :app:assembleDebugAndroidTest — BUILD SUCCESSFUL. Финальная сборка 8 с. JVM: 87 тестов, включая 5 новых проверок готовности/округления/пустых строк/перестановки/ID. Новых зависимостей и изменений Kotlin/Gradle/AGP нет.
+- Первые два затянувшихся запуска компиляции остановлены; после упрощения обработчика и ключа редактора сборка завершилась. При одном запуске sandbox запретил доступ к кэшу Gradle; сборка повторена с разрешением. Существующее предупреждение deprecated API NativeRichEditor не является ошибкой сборки.
+- Эмулятор Medium_Phone, Android 17/API 37; все команды adb направлены только на emulator-5554. Первый прогон 28 тестов выявил неоднозначный селектор отмены (текст пункта совпал с кнопкой); тестовые данные исправлены. Затем общий прогон 48/48, 98.899 с. После окончательных правок — OK (78 tests), 97.475 с, app/build/verification/checklists/final-tests.txt.
+- ChecklistStorageTest (4): порядок и стабильные ID после закрытия/повторного открытия дисковой базы, готовность 0/33/100, защита от ручной перезаписи, сортировка, сохранность обычной заметки; создание и восстановление .ontop через BackupManager, импорт реального архива v5 без полей чек-листа, JSON и текст Share; миграция 11→12 с прежней готовностью и историей; читаемые FIXED/ROTATION без событий просмотра.
+- ChecklistEditorTest (2): создание чек-листа верхним/нижним добавлением, сохранение, отметка в просмотре и готовность 50%, отсутствие ручного регулятора, отмена правок без изменения сохранённых пунктов, создание обычной заметки; перетаскивание за захват в списке из 30 пунктов, автоматическая прокрутка, отсутствие случайных отметок и фокус нового нижнего пункта.
+- Остальные тесты итогового прогона: BackupTest 14, TagBackupTest 4, AnalysisExportTest 9, WidgetRotationTest 4, NoteInteractionTest 4, NotePercentagesStorageTest 1, NoteSliderTest 3, NotePercentagesFlowTest 1, NoteInteractionFlowTest 3, CardCommentDaoTest 3, CardImageTest 5, TagDaoTest 3, NoteLifecycleTest 3, ReminderMigrationTest 1, FlexibleReminderMigrationTest 1, RichTextMigrationTest 2, NativeRichEditorTest 3, SharingTest 8. Проверены прежние мультимедиа, комментарии, темы, напоминания, архив/корзина, события и цепочки миграций.
+- Просмотрен скриншот редактора при Compose-ширине 360 dp: app/build/verification/checklists/checklists/editor-360dp.png. Две строки и обе кнопки добавления помещаются без прежнего пустого пространства описания; фон белый. git diff --check — без ошибок.
+- APK: app/build/outputs/apk/debug/app-debug.apk. Git commit/push не выполнялись. Ранее подготовленные изменения статистики 15.2 сохранены.
+
+Ограничения и ручная проверка:
+
+- Физический телефон не использовался и не изменялся. На нём проверить клавиатуру, перенос длинных пунктов, TalkBack, крупный шрифт, жесты/удержание захвата при длинном списке, реальный лаунчер и получателей Android Sharesheet.
+- Сохранность после повторного открытия базы проверена; принудительное завершение процесса/перезагрузка телефона с открытым черновиком не проверялись. В тестах нет масштабного нагрузочного прогона на тысячи пунктов и реальных приложений Telegram/WhatsApp. Полный набор всех Android-тестов проекта не запускался.
+- На виджете показываются первые три пункта с ограничением строк существующего макета. Полный список доступен в заметке и Share. Старые версии OnTop не читают новый архив v6; новая версия читает старые архивы.
+- Проверка на телефоне: установить APK; создать обычную заметку и чек-лист из трёх пунктов; отметить один (33%), все (100%), снять отметку; в редакторе добавить сверху/снизу, удалить и перетащить пункты, сохранить и повторно открыть; проверить отмену, сортировку по готовности, Share и экспорт/восстановление .ontop. Перед восстановлением собственных данных сохранить актуальную резервную копию.

@@ -26,6 +26,8 @@ import com.ontop.app.data.CardImageStore
 import com.ontop.app.data.OnTopDatabase
 import com.ontop.app.data.CardEntity
 import com.ontop.app.text.RichTextCodec
+import com.ontop.app.data.Checklist
+import com.ontop.app.data.checklistItems
 import com.ontop.app.text.MediaKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -76,7 +78,8 @@ class CardWidget : GlanceAppWidget() {
                 title = when (stored?.status) {
                     com.ontop.app.data.CardStatus.ARCHIVED -> "Заметка в архиве"
                     com.ontop.app.data.CardStatus.TRASHED -> "Заметка в корзине"
-                    else -> card?.title ?: "Карточка удалена"
+                    else -> card?.let { note -> listOf(note.title, Checklist.text(note.checklistItems().take(3)))
+                        .filter { it.isNotBlank() }.joinToString("\n") } ?: "Карточка удалена"
                 }
                 if (card == null) cardId = null
                 card?.widgetCoverPath()?.let {

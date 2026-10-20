@@ -4,6 +4,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.material3.Icon
+import androidx.compose.ui.res.painterResource
+import com.ontop.app.data.NoteType
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -70,6 +75,7 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
     val flow = remember(viewModel, lifecycle) { viewModel.state.flowWithLifecycle(lifecycle) }
     val state by flow.collectAsState(initial = viewModel.state.value)
     var editorOpen by rememberSaveable { mutableStateOf(false) }
+    var newNoteType by rememberSaveable { mutableStateOf(NoteType.NOTE) }
     var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
     var editing by rememberSaveable { mutableStateOf(false) }
     var sliderOpen by rememberSaveable { mutableStateOf(false) }
@@ -119,7 +125,7 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
     state.storedCards.firstOrNull { it.id == percentNoteId.value }?.let { note ->
         NotePercentagesDialog(note.id, note.importance, note.progress, onDismiss = { percentNoteId.value = null },
             onSave = { importance, progress -> viewModel.savePercentages(note.id, importance, progress) { percentNoteId.value = null } },
-            saving = state.saving, error = state.error)
+            saving = state.saving, error = state.error, automaticProgress = note.noteType == NoteType.CHECKLIST)
     }
     LaunchedEffect(incomingShare?.id) {
         if (incomingShare != null && (editorOpen || percentNoteId.value != null)) android.widget.Toast.makeText(context,
@@ -155,6 +161,7 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
         return
     }
     if ((!editorOpen || !editing) && (!sliderOpen || editorOpen)) BoardContent(state, gridState = gridState, onAdd = {
+        newNoteType = NoteType.NOTE
         selectedId = null
         editing = true
         editorOpen = true
@@ -167,7 +174,8 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
         viewModel.clearError()
     }, onView = { viewModel.sliderSession.enter(filteredCards); sliderOpen = true }, onSettings = { settingsOpen = true },
         onSort = viewModel::setBoardSort, onSelectTag = viewModel::selectTag, onManageTags = { viewModel.clearError(); tagsOpen = true },
-        onCollection = { collection = it }, onPercentages = { viewModel.clearError(); percentNoteId.value = it.id })
+        onCollection = { collection = it }, onPercentages = { viewModel.clearError(); percentNoteId.value = it.id },
+        onAddChecklist = { newNoteType = NoteType.CHECKLIST; selectedId = null; editing = true; editorOpen = true; viewModel.clearError() })
 
     if (tagsOpen) TagManagementDialog(state, viewModel::createTag, viewModel::renameTag, viewModel::deleteTag,
         onClose = { tagsOpen = false; viewModel.clearError() })
@@ -177,6 +185,7 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
         tags = state.tags, cardTags = state.cardTags,
         saving = state.saving, error = state.error,
         onSavePercentages = viewModel::savePercentages, onClearError = viewModel::clearError,
+        onChecklistToggle = viewModel::toggleChecklistItem,
         onClose = { sliderOpen = false },
         onEdit = { selectedId = it.id; editing = true; editorOpen = true; viewModel.clearError() },
         onDetails = { selectedId = it.id; editing = false; editorOpen = true; viewModel.clearError() })
@@ -208,7 +217,8 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
             } },
             onSaved = { editorOpen = false; editing = false; sharedDraft = null; sharedImagePath = null },
             onDelete = { selected?.let { card -> viewModel.delete(card) { editorOpen = false; editing = false } } },
-            sharedDraft = sharedDraft, sharedInlinePath = sharedImagePath
+            sharedDraft = sharedDraft, sharedInlinePath = sharedImagePath,
+            newNoteType = if (sharedDraft != null) NoteType.NOTE else newNoteType
         )
         }
     }
@@ -219,7 +229,8 @@ internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnt
     gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(), onView: () -> Unit = {},
     onSettings: () -> Unit = {}, onSort: (BoardSort) -> Unit = {},
     onSelectTag: (Long?) -> Unit = {}, onManageTags: () -> Unit = {},
-    onCollection: (com.ontop.app.data.CardStatus) -> Unit = {}, onPercentages: (CardEntity) -> Unit = {}) {
+    onCollection: (com.ontop.app.data.CardStatus) -> Unit = {}, onPercentages: (CardEntity) -> Unit = {},
+    onAddChecklist: () -> Unit = {}) {
     val displayedCards = remember(state.cards, state.sortMode, state.cardTags, state.selectedTagId) {
         sortedBoardCards(filterCardsByTag(state.cards, state.cardTags, state.selectedTagId), state.sortMode)
     }
@@ -232,14 +243,21 @@ internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnt
     }
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        floatingActionButton = {
+        bottomBar = {
+            Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp, androidx.compose.ui.Alignment.End)) {
             FloatingActionButton(
                 onClick = onAdd,
                 containerColor = Forest,
                 contentColor = Color.White,
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.semantics { contentDescription = "Создать карточку" }
-            ) { Text("+", style = MaterialTheme.typography.headlineMedium) }
+            ) { Icon(painterResource(R.drawable.ic_add_note), "Обычная заметка") }
+            FloatingActionButton(onClick = onAddChecklist, containerColor = Forest, contentColor = Color.White,
+                shape = RoundedCornerShape(20.dp), modifier = Modifier.semantics { contentDescription = "Создать чек-лист" }) {
+                Icon(painterResource(R.drawable.ic_checklist), null)
+            }
+            }
         }
     ) { innerPadding ->
         Column(Modifier.fillMaxSize().padding(innerPadding).consumeWindowInsets(innerPadding)) {

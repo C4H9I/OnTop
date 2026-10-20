@@ -143,7 +143,7 @@ class BackupTest {
     }
 
     @Test fun journalsFromBeforeStatusFieldRecoverAfterUpgradeWithoutDeletingCommittedMedia() = runBlocking {
-        for (version in listOf(1, 2, 3, 4)) Fixture(fileBacked = true).use { f ->
+        for (version in listOf(1, 2, 3, 4, 5)) Fixture(fileBacked = true).use { f ->
             val source = f.source(); val archive = f.archive(source); val old = f.old()
             val manager = f.manager { if (it == "committed") throw ProcessDeath() }
             manager.prepare { archive.inputStream() }
@@ -152,7 +152,7 @@ class BackupTest {
             val journal = File(f.root, "restore.json")
             val record = JSONObject(journal.readText())
             record.put("fingerprintVersion", version).put("fingerprint",
-                BackupFormat.fingerprint(current, includeTags = version >= 2, includeStatus = version >= 3, includeProgress = version >= 4, includeInteractions = false))
+                BackupFormat.fingerprint(current, includeTags = version >= 2, includeStatus = version >= 3, includeProgress = version >= 4, includeInteractions = version >= 5, includeChecklist = false))
             journal.writeText(record.toString())
             f.reopen()
             val restarted = f.manager(); restarted.recover()
@@ -457,7 +457,7 @@ class BackupTest {
             manager.prepare { invalid.inputStream() }
             assertNotNull(manager.state.value.error)
             assertEquals(before, manager.snapshot())
-            assertTrue(BackupFormat.decode(BackupFormat.encode(source, includeInteractions = false)).interactions.isEmpty())
+            assertTrue(BackupFormat.decode(BackupFormat.encode(source, includeInteractions = false, includeChecklist = false)).interactions.isEmpty())
         }
     }
 

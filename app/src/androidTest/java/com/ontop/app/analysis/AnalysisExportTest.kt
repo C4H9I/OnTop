@@ -31,7 +31,7 @@ class AnalysisExportTest {
             val values = listOf<Int?>(null, 0, 50, 100)
             values.forEachIndexed { index, progress -> db.cardDao().insert(card(index + 1L).copy(progress = progress)) }
             val root = JSONObject(json(db))
-            assertEquals(2, root.getInt("schemaVersion"))
+            assertEquals(3, root.getInt("schemaVersion"))
             val notes = root.getJSONArray("notes")
             assertTrue(notes.getJSONObject(0).has("progress"))
             assertTrue(notes.getJSONObject(0).isNull("progress"))
@@ -74,7 +74,7 @@ class AnalysisExportTest {
         val db = database()
         try {
             val empty = JSONObject(json(db))
-            assertEquals(2, empty.getInt("schemaVersion"))
+            assertEquals(3, empty.getInt("schemaVersion"))
             assertEquals(at.toString(), empty.getString("exportedAt"))
             assertEquals(0, empty.getJSONArray("notes").length())
             listOf(0, 50, 100).forEachIndexed { i, importance -> db.cardDao().insert(card(i + 1L, importance = importance)) }

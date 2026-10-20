@@ -40,7 +40,7 @@ class FlexibleReminderMigrationTest {
                 old.version = 4
             }
             db = Room.databaseBuilder(context, OnTopDatabase::class.java, name)
-                .addMigrations(OnTopDatabase.MIGRATION_4_5, OnTopDatabase.MIGRATION_5_6, OnTopDatabase.MIGRATION_6_7, OnTopDatabase.MIGRATION_7_8, OnTopDatabase.MIGRATION_8_9, OnTopDatabase.MIGRATION_9_10, OnTopDatabase.MIGRATION_10_11).build()
+                .addMigrations(OnTopDatabase.MIGRATION_4_5, OnTopDatabase.MIGRATION_5_6, OnTopDatabase.MIGRATION_6_7, OnTopDatabase.MIGRATION_7_8, OnTopDatabase.MIGRATION_8_9, OnTopDatabase.MIGRATION_9_10, OnTopDatabase.MIGRATION_10_11, OnTopDatabase.MIGRATION_11_12).build()
             val card = db.cardDao().findById(7)!!
             assertEquals(CardEntity(7, "Мысль", "Описание", CardSize.WIDE, 100, 200, 3, "images/abc.jpg"), card)
             assertEquals("Размышление", db.cardCommentDao().observeComments(7).first().single().text)

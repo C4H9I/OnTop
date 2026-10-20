@@ -25,7 +25,8 @@ import kotlin.math.*
 
 @Composable
 internal fun NotePercentagesDialog(noteId: Long, importance: Int, progress: Int?,
-    onDismiss: () -> Unit, onSave: (Int, Int?) -> Unit, saving: Boolean = false, error: String? = null) {
+    onDismiss: () -> Unit, onSave: (Int, Int?) -> Unit, saving: Boolean = false, error: String? = null,
+    automaticProgress: Boolean = false) {
     var importanceText by rememberSaveable(noteId) { mutableStateOf(importance.toString()) }
     var progressText by rememberSaveable(noteId) { mutableStateOf((progress ?: 0).toString()) }
     var lastImportance by rememberSaveable(noteId) { mutableIntStateOf(importance) }
@@ -41,15 +42,16 @@ internal fun NotePercentagesDialog(noteId: Long, importance: Int, progress: Int?
             PercentageControl("importance", importanceText, lastImportance, !saving, MaterialTheme.colorScheme.primary,
                 onText = { text -> importanceText = text; parsePercentage(text)?.let { lastImportance = it } },
                 onValue = { lastImportance = it; importanceText = it.toString() })
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!automaticProgress) Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Отслеживать готовность", Modifier.weight(1f))
                 Switch(tracking, { tracking = it }, enabled = !saving, modifier = Modifier.testTag("progress-tracking"))
             }
             Text("Готовность", style = MaterialTheme.typography.titleMedium)
-            PercentageControl("progress", progressText, lastProgress, !saving && tracking, Color(0xFF438CBA),
+            if (automaticProgress) Text("Рассчитывается по выполненным пунктам")
+            else PercentageControl("progress", progressText, lastProgress, !saving && tracking, Color(0xFF438CBA),
                 onText = { text -> progressText = text; parsePercentage(text)?.let { lastProgress = it } },
                 onValue = { lastProgress = it; progressText = it.toString() })
-            if (!tracking) Text("Готовность для этой заметки не отслеживается.", style = MaterialTheme.typography.bodySmall)
+            if (!tracking && !automaticProgress) Text("Готовность для этой заметки не отслеживается.", style = MaterialTheme.typography.bodySmall)
             if (error != null) Text(error, color = MaterialTheme.colorScheme.error)
         }
     }, confirmButton = {

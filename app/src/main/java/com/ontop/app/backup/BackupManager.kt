@@ -157,7 +157,7 @@ internal class BackupManager internal constructor(
                         formatting = if (doc.imagePaths().isEmpty()) card.formatting else RichTextCodec.encode(doc.copy(
                             media = doc.media.map { block -> block.path?.let { block.copy(path = paths.getValue(it)) } ?: block })))
                 }, reminders = original.reminders.map { it.copy(id = newId(), nextAt = null, snoozeAt = null) })
-                writeJournal(JSONObject().put("fingerprint", BackupFormat.fingerprint(incoming)).put("fingerprintVersion", 5)
+                writeJournal(JSONObject().put("fingerprint", BackupFormat.fingerprint(incoming)).put("fingerprintVersion", 6)
                     .put("generation", UUID.randomUUID().toString())
                     .put("oldRules", JSONArray(old.reminders.map { it.id })).put("oldFiles", JSONArray(old.paths().toList()))
                     .put("newFiles", JSONArray(paths.values.toList())))
@@ -214,7 +214,8 @@ internal class BackupManager internal constructor(
         val committed = BackupFormat.fingerprint(current, includeTags = record.optInt("fingerprintVersion", 1) >= 2,
             includeStatus = record.optInt("fingerprintVersion", 1) >= 3,
             includeProgress = record.optInt("fingerprintVersion", 1) >= 4,
-            includeInteractions = record.optInt("fingerprintVersion", 1) >= 5) == record.getString("fingerprint")
+            includeInteractions = record.optInt("fingerprintVersion", 1) >= 5,
+            includeChecklist = record.optInt("fingerprintVersion", 1) >= 6) == record.getString("fingerprint")
         if (committed) {
             progress("Обновление напоминаний и виджетов…")
             val ids = record.getJSONArray("oldRules").let { a -> (0 until a.length()).map { a.getLong(it) } }

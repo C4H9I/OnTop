@@ -6,6 +6,8 @@ import android.content.Intent
 import androidx.core.content.FileProvider
 import com.ontop.app.data.CardEntity
 import com.ontop.app.data.CardImageStore
+import com.ontop.app.data.Checklist
+import com.ontop.app.data.checklistItems
 import com.ontop.app.text.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +30,7 @@ internal fun sharedNoteText(card: CardEntity): String {
         }
         append(document.text.substring(start))
     }.trim()
-    return listOf(card.title.trim(), body).filter { it.isNotBlank() }.joinToString("\n\n")
+    return listOf(card.title.trim(), body, Checklist.text(card.checklistItems())).filter { it.isNotBlank() }.joinToString("\n\n")
 }
 
 internal data class PreparedShare(val intent: Intent, val imageUnavailable: Boolean = false)

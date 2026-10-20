@@ -35,7 +35,7 @@ internal data class BackupLimits(val archive: Long = 512L * 1024 * 1024,
 
 /** A logical export, independent of SQLite schema/version and Android filesystem locations. */
 internal object BackupFormat {
-    const val VERSION = 5
+    const val VERSION = 6
     private val imageName = Regex("images/[a-f0-9-]{1,64}\\.jpg")
     fun validPath(path: String): Boolean = imageName.matches(path)
     private fun JSONObject.required(name: String): Any { require(has(name)); return get(name) }
@@ -108,7 +108,7 @@ internal object BackupFormat {
     }
 
     fun encode(data: BackupData, includeTags: Boolean = true, includeStatus: Boolean = true,
-        includeProgress: Boolean = true, includeInteractions: Boolean = true): ByteArray = JSONObject().put("cards", JSONArray().apply {
+        includeProgress: Boolean = true, includeInteractions: Boolean = true, includeChecklist: Boolean = true): ByteArray = JSONObject().put("cards", JSONArray().apply {
         data.cards.sortedBy { it.id }.forEach { c -> put(JSONObject().put("id", c.id).put("title", c.title)
             .put("description", c.description).put("size", c.size.name).put("createdAt", c.createdAt)
             .put("updatedAt", c.updatedAt).put("sortOrder", c.sortOrder).put("importance", c.importance)
@@ -116,6 +116,10 @@ internal object BackupFormat {
             .apply {
                 if (includeStatus) put("status", c.status.name)
                 if (includeProgress) nullable("progress", c.progress)
+                if (includeChecklist) {
+                    put("noteType", c.noteType.name)
+                    put("checklist", JSONArray(Checklist.encode(c.checklistItems())))
+                }
             }) }
     }).put("comments", JSONArray().apply {
         data.comments.sortedBy { it.id }.forEach { c -> put(JSONObject().put("id", c.id).put("cardId", c.cardId)
@@ -143,11 +147,15 @@ internal object BackupFormat {
     }.toString().toByteArray(Charsets.UTF_8)
 
     fun decode(bytes: ByteArray, requireTags: Boolean = false, requireStatus: Boolean = false,
-        requireProgress: Boolean = false, requireInteractions: Boolean = false): BackupData {
+        requireProgress: Boolean = false, requireInteractions: Boolean = false, requireChecklist: Boolean = false): BackupData {
         val root = objectFrom(bytes.toString(Charsets.UTF_8))
         require(root.has("tags") == root.has("cardTags"))
         if (requireTags) require(root.has("tags"))
         val cards = root.list("cards", 10_000).map { c ->
+            if (requireChecklist) require(c.has("noteType") && c.has("checklist"))
+            val type = if (c.has("noteType")) NoteType.valueOf(c.string("noteType", 20)) else NoteType.NOTE
+            val checklist = if (c.has("checklist")) Checklist.decode(c.getJSONArray("checklist").toString()) else emptyList()
+            require(type == NoteType.CHECKLIST || checklist.isEmpty())
             CardEntity(c.id("id"), c.string("title", 10_000).also { require(it.isNotBlank()) }, c.string("description"),
                 CardSize.valueOf(c.string("size", 20)), c.time("createdAt"), c.time("updatedAt"), c.number("sortOrder"),
                 c.nullString("imagePath", 100)?.also { require(validPath(it)) }, c.nullString("formatting"),
@@ -155,7 +163,8 @@ internal object BackupFormat {
                 if (c.has("status")) CardStatus.valueOf(c.string("status", 20)) else {
                     require(!requireStatus); CardStatus.ACTIVE
                 }, if (c.has("progress") && !c.isNull("progress")) c.int("progress").also { require(it in 0..100) }
-                    else { require(!requireProgress || c.has("progress")); null })
+                    else { require(!requireProgress || c.has("progress")); null }, type,
+                if (type == NoteType.CHECKLIST) Checklist.encode(checklist) else null).normalizedChecklist()
                 .also { document(it.description, it.formatting) }
         }
         val comments = root.list("comments", 100_000).map { c ->
@@ -195,8 +204,8 @@ internal object BackupFormat {
 
     fun digest(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     fun fingerprint(data: BackupData, includeTags: Boolean = true, includeStatus: Boolean = true,
-        includeProgress: Boolean = true, includeInteractions: Boolean = true): String = digest(encode(data.copy(
-        reminders = data.reminders.map { it.copy(nextAt = null, snoozeAt = null) }), includeTags, includeStatus, includeProgress, includeInteractions))
+        includeProgress: Boolean = true, includeInteractions: Boolean = true, includeChecklist: Boolean = true): String = digest(encode(data.copy(
+        reminders = data.reminders.map { it.copy(nextAt = null, snoozeAt = null) }), includeTags, includeStatus, includeProgress, includeInteractions, includeChecklist))
 
     /** Enforce limits against actual bytes read; ZIP metadata is untrusted. */
     fun copy(input: InputStream, output: OutputStream, limit: Long): Long {
@@ -286,7 +295,8 @@ internal object BackupFormat {
             require(actual.first == file.number("bytes") && actual.second == hash) { "Контрольная сумма не совпадает." }
         }
         val data = decode(File(target, "data.json").readBytes(), requireTags = archiveVersion >= 2,
-            requireStatus = archiveVersion >= 3, requireProgress = archiveVersion >= 4, requireInteractions = archiveVersion >= 5)
+            requireStatus = archiveVersion >= 3, requireProgress = archiveVersion >= 4, requireInteractions = archiveVersion >= 5,
+            requireChecklist = archiveVersion >= 6)
         require(data.paths() == extracted.keys - setOf("manifest.json", "data.json")) { "В архиве отсутствуют изображения или есть лишние файлы." }
         data.paths().forEach { path -> checkImage(File(target, path)) }
         return data

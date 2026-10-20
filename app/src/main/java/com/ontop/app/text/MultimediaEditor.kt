@@ -18,7 +18,8 @@ internal fun MultimediaEditor(document: RichDocument, onChange: (RichDocument) -
     root: NativeRichController, activeKey: String, onControllerReady: (NativeRichController) -> Unit,
     onActive: (String, NativeRichController, Boolean) -> Unit,
     focusAfter: MediaInsertPoint?, onFocusHandled: () -> Unit,
-    onMoveCursor: (MediaInsertPoint) -> Unit, onPaste: (VideoPaste) -> Unit) {
+    onMoveCursor: (MediaInsertPoint) -> Unit, onPaste: (VideoPaste) -> Unit,
+    minimumLines: Int = 12, placeholder: String = "О чём хочется помнить?") {
     val current by rememberUpdatedState(document)
     val change by rememberUpdatedState(onChange)
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -32,8 +33,8 @@ internal fun MultimediaEditor(document: RichDocument, onChange: (RichDocument) -
             NativeRichEditor(document.fragment(piece), { fragment -> change(current.replacePiece(piece.key, fragment)) }, enabled,
                 controller, { focused -> onActive(piece.key, controller, focused) },
                 modifier = Modifier.bringIntoViewRequester(bringIntoView),
-                minimumLines = if (document.media.isEmpty()) 12 else 1,
-                placeholder = if (document.media.isEmpty()) "О чём хочется помнить?" else "Продолжить текст…",
+                minimumLines = if (document.media.isEmpty()) minimumLines else 1,
+                placeholder = if (document.media.isEmpty()) placeholder else "Продолжить текст…",
                 editorTag = if (piece.index == 0) "editor-description" else "editor-text-${piece.key}")
             youtubeLinks(document.fragment(piece).text).forEach { link ->
                 TextButton(enabled = enabled, onClick = { change(current.linkToVideo(piece.key, link)) },
