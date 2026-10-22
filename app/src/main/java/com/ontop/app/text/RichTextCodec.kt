@@ -10,7 +10,7 @@ internal object RichTextCodec {
         var media = emptyList<NoteMedia>()
         val ranges = runCatching {
             val root = JSONObject(formatting)
-            if (root.getInt("v") !in 1..2) return RichDocument(text)
+            if (root.getInt("v") !in 1..4) return RichDocument(text)
             val blocks = root.optJSONArray("media")
             if (blocks != null) media = (0 until blocks.length()).mapNotNull { index -> runCatching {
                 val block = blocks.getJSONObject(index)
@@ -20,8 +20,16 @@ internal object RichTextCodec {
                 val id = block.getString("id"); require(id.isNotBlank())
                 if (kind == MediaKind.IMAGE) {
                     val path = block.getString("path")
-                    require(Regex("images/[a-f0-9-]+\\.jpg").matches(path))
+                    require(Regex("images/[a-f0-9-]+\\.(jpg|png)").matches(path))
                     NoteMedia(id, offset, kind, path = path)
+                } else if (kind in setOf(MediaKind.FILE, MediaKind.AUDIO, MediaKind.LOCAL_VIDEO)) {
+                    val path = block.getString("path")
+                    require(com.ontop.app.data.AttachmentStore.validPath(path))
+                    val name = block.getString("name"); require(name.isNotBlank() && name.length <= 1024)
+                    val mime = block.getString("mime"); require(mime.length <= 255)
+                    val bytes = block.getLong("bytes"); require(bytes >= 0)
+                    val duration = if (block.has("duration")) block.getLong("duration").also { require(it >= 0) } else null
+                    NoteMedia(id, offset, kind, path = path, name = name, mime = mime, bytes = bytes, durationMillis = duration)
                 } else {
                     val video = YouTubeLink.parse(block.getString("url")) ?: error("Invalid video")
                     NoteMedia(id, offset, kind, video = video)
@@ -40,14 +48,18 @@ internal object RichTextCodec {
     fun encode(document: RichDocument): String? {
         val ranges = document.normalized().ranges
         if (ranges.isEmpty() && document.media.isEmpty()) return null
-        return JSONObject().put("v", if (document.media.isEmpty()) 1 else 2).put("ranges", JSONArray().apply {
+        return JSONObject().put("v", if (document.media.any { it.kind in setOf(MediaKind.AUDIO, MediaKind.LOCAL_VIDEO) }) 4
+            else if (document.media.any { it.isAttachment }) 3 else if (document.media.isEmpty()) 1 else 2).put("ranges", JSONArray().apply {
             ranges.forEach { range -> put(JSONObject().put("s", range.start).put("e", range.end).put("k", range.kind.name).apply {
                 range.color?.let { put("c", it) }
             }) }
         }).apply {
             if (document.media.isNotEmpty()) put("media", JSONArray().apply {
                 document.media.forEach { block -> put(JSONObject().put("id", block.id).put("at", block.offset).put("kind", block.kind.name).apply {
-                    if (block.kind == MediaKind.IMAGE) put("path", block.path) else put("url", block.video!!.source)
+                    if (block.isAttachment) {
+                        put("path", block.path); put("name", block.name); put("mime", block.mime); put("bytes", block.bytes)
+                        block.durationMillis?.let { put("duration", it) }
+                    } else if (block.kind == MediaKind.IMAGE) put("path", block.path) else put("url", block.video!!.source)
                 }) }
             })
         }.toString()

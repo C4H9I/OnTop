@@ -148,31 +148,40 @@ internal class BackupManager internal constructor(
         withContext(NonCancellable) {
             reminders.withDataLock {
                 val old = snapshot()
-                val paths = original.paths().associateWith { "images/${UUID.randomUUID()}.jpg" }
+                val paths = original.paths().associateWith { "${if (AttachmentStore.validPath(it)) "attachments" else "images"}/${UUID.randomUUID()}.${it.substringAfterLast('.')}" }
+                val resources = paths.flatMap { (source, destination) ->
+                    com.ontop.app.drawing.DrawingStore.resources(source).zip(com.ontop.app.drawing.DrawingStore.resources(destination))
+                }.filter { (source, _) -> !source.endsWith(".source") || File(File(stage, "content"), source).isFile }.toMap()
                 val usedIds = (old.reminders + original.reminders).map { it.id }.toMutableSet()
                 fun newId(): Long { while (true) { val id = Random.nextLong(1, 1L shl 48); if (usedIds.add(id)) return id } }
                 val incoming = original.copy(cards = original.cards.map { card ->
                     val doc = BackupFormat.document(card.description, card.formatting)
                     card.copy(imagePath = card.imagePath?.let(paths::getValue),
-                        formatting = if (doc.imagePaths().isEmpty()) card.formatting else RichTextCodec.encode(doc.copy(
+                        formatting = if (doc.resourcePaths().isEmpty()) card.formatting else RichTextCodec.encode(doc.copy(
                             media = doc.media.map { block -> block.path?.let { block.copy(path = paths.getValue(it)) } ?: block })))
                 }, reminders = original.reminders.map { it.copy(id = newId(), nextAt = null, snoozeAt = null) })
                 writeJournal(JSONObject().put("fingerprint", BackupFormat.fingerprint(incoming)).put("fingerprintVersion", 6)
                     .put("generation", UUID.randomUUID().toString())
-                    .put("oldRules", JSONArray(old.reminders.map { it.id })).put("oldFiles", JSONArray(old.paths().toList()))
-                    .put("newFiles", JSONArray(paths.values.toList())))
+                    .put("oldRules", JSONArray(old.reminders.map { it.id })).put("oldFiles", JSONArray(old.paths().flatMap(com.ontop.app.drawing.DrawingStore::resources)))
+                    .put("newFiles", JSONArray(resources.values.toList())))
                 blocked = true
                 checkpoint("journal")
-                paths.forEach { (source, destination) ->
+                resources.forEach { (source, destination) ->
                     val file = CardImageStore(context).resolve(destination)
                     check(file.parentFile!!.isDirectory || file.parentFile!!.mkdirs())
                     FileOutputStream(file).use { output ->
-                        File(File(stage, "content"), source).inputStream().use { BackupFormat.copy(it, output, BackupLimits().image) }
+                        val input = File(File(stage, "content"), source)
+                        if (source.endsWith(".drawing.json")) {
+                            val drawing = com.ontop.app.drawing.DrawingCodec.decode(input.readText(Charsets.UTF_8))
+                            output.write(com.ontop.app.drawing.DrawingCodec.encode(drawing.copy(
+                                backgroundImage = drawing.backgroundImage?.let { resources.getValue(it) })).toByteArray(Charsets.UTF_8))
+                        } else input.inputStream().use { BackupFormat.copy(it, output, BackupLimits().resource(source)) }
                         output.fd.sync()
                     }
                     checkpoint("image")
                 }
                 syncDirectory(File(context.filesDir, "images"))
+                if (resources.values.any(AttachmentStore::validPath)) syncDirectory(File(context.filesDir, "attachments"))
                 checkpoint("files")
                 progress("Замена данных…")
                 db.withTransaction {
@@ -222,9 +231,9 @@ internal class BackupManager internal constructor(
             reminders.finishReplacement(ids)
             refreshWidgets()
         }
-        val references = current.paths()
+        val references = current.paths().flatMap(com.ontop.app.drawing.DrawingStore::resources).toSet()
         // Rollback removes only newly installed files; success removes only old, unreferenced files.
-        strings(if (committed) "oldFiles" else "newFiles").filter { it !in references && BackupFormat.validPath(it) }.forEach { path ->
+        strings(if (committed) "oldFiles" else "newFiles").filter { it !in references && BackupFormat.validResource(it) }.forEach { path ->
             val file = CardImageStore(context).resolve(path)
             check(!file.exists() || file.delete())
         }

@@ -18,7 +18,7 @@ import kotlin.math.max
 /** Paths are relative to filesDir, so images can travel with the database in a future export. */
 class CardImageStore(private val context: Context) {
     fun resolve(path: String): File {
-        require(Regex("images/[a-f0-9-]+\\.jpg").matches(path)) { "Invalid image path" }
+        require(AttachmentStore.validPath(path) || Regex("images/[a-f0-9-]+\\.(jpg|png|source|drawing\\.json)").matches(path)) { "Invalid image path" }
         return File(context.filesDir, path)
     }
 
@@ -84,6 +84,12 @@ class CardImageStore(private val context: Context) {
         if (path != null) {
             val file = resolve(path)
             if (file.exists() && !file.delete()) throw IOException("Cannot remove image")
+            if (com.ontop.app.drawing.DrawingStore.isDrawing(path)) {
+                val model = resolve(com.ontop.app.drawing.DrawingStore.modelPath(path))
+                if (model.exists() && !model.delete()) throw IOException("Cannot remove drawing model")
+                val source = resolve(com.ontop.app.drawing.DrawingStore.sourcePath(path))
+                if (source.exists() && !source.delete()) throw IOException("Cannot remove drawing source")
+            }
         }
     }
 

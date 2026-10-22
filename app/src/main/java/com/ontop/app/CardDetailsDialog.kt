@@ -173,7 +173,7 @@ internal fun CardDetailsContent(
     var confirmPermanent by rememberSaveable(card.id) { mutableStateOf(false) }
     if (confirmPermanent) AlertDialog(onDismissRequest = { confirmPermanent = false },
         title = { Text("Удалить заметку навсегда?") },
-        text = { Text("Заметка, комментарии и неиспользуемые изображения будут удалены без возможности восстановления.") },
+        text = { Text("Заметка, комментарии и файлы, которые больше нигде не используются, будут удалены без возможности восстановления.") },
         confirmButton = { TextButton(enabled = !saving, onClick = { confirmPermanent = false; onPermanentDelete?.invoke() }) { Text("Удалить навсегда") } },
         dismissButton = { TextButton(onClick = { confirmPermanent = false }) { Text("Отмена") } })
     var draft by rememberSaveable(card.id) { mutableStateOf("") }

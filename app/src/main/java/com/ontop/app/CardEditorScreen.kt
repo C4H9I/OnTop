@@ -36,6 +36,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.geometry.Rect
 import com.ontop.app.text.*
+import com.ontop.app.gallery.MediaDestination
 
 /** One editor route for both creation and updates; persistence stays in BoardViewModel. */
 @Composable
@@ -58,6 +59,10 @@ internal fun CardEditorScreen(
     onRetryReminders: () -> Unit = {},
     onSaveFormatted: ((String, String, CardSize, String?) -> Unit)? = null,
     onInlineImport: ((Uri, (String) -> Unit) -> Unit)? = null,
+    onCameraImport: ((String, (String) -> Unit) -> Unit)? = null,
+    onCameraCoverImport: ((String) -> Unit)? = null,
+    onCapturedMediaImport: ((String, (NoteMedia) -> Unit) -> Unit)? = null,
+    onAttachFile: ((List<Uri>, (List<NoteMedia>) -> Unit) -> Unit)? = null,
     onInlineDraftPaths: (Set<String>) -> Unit = {},
     onSaveWithImportance: ((String, String, CardSize, String?, Int) -> Unit)? = null,
     availableTags: List<TagEntity> = emptyList(), initialTagIds: List<Long> = emptyList(),
@@ -112,6 +117,14 @@ internal fun CardEditorScreen(
     var pendingInsert by rememberSaveable(editorKey) { mutableStateOf(MediaInsertPoint("body", 0)) }
     var focusAfter by rememberSaveable(editorKey) { mutableStateOf<MediaInsertPoint?>(null) }
     var videoDialog by rememberSaveable(editorKey) { mutableStateOf(false) }
+    var galleryOpen by rememberSaveable(editorKey) { mutableStateOf(false) }
+    var galleryDestination by rememberSaveable(editorKey) { mutableStateOf(MediaDestination.CONTENT) }
+    var cameraDestination by rememberSaveable(editorKey) { mutableStateOf(MediaDestination.CONTENT) }
+    var audioMenu by rememberSaveable(editorKey) { mutableStateOf(false) }
+    var audioRecording by rememberSaveable(editorKey) { mutableStateOf(false) }
+    var drawingKey by rememberSaveable(editorKey) { mutableStateOf<String?>(null) }
+    var drawingBlockId by rememberSaveable(editorKey) { mutableStateOf<String?>(null) }
+    var drawingSource by rememberSaveable(editorKey) { mutableStateOf<String?>(null) }
     var pastedVideo by rememberSaveable(editorKey) { mutableStateOf<VideoPaste?>(null) }
     var bodyFocused by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -137,11 +150,10 @@ internal fun CardEditorScreen(
         if (uri != null) onImageSelected(uri)
     }
     val chooseImage = {
-        dismissKeyboard()
-        try { picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
-        catch (_: Exception) { onPickerFailed() }
+        dismissKeyboard(); displayOpen = false
+        galleryDestination = MediaDestination.COVER; galleryOpen = true
     }
-    LaunchedEffect(document.imagePaths()) { onInlineDraftPaths(document.imagePaths()) }
+    LaunchedEffect(document.resourcePaths()) { onInlineDraftPaths(document.resourcePaths()) }
     fun insertBlock(block: NoteMedia) {
         document = document.insertMedia(pendingInsert.key, pendingInsert.cursor, block)
         focusAfter = MediaInsertPoint(block.id, 0)
@@ -152,11 +164,47 @@ internal fun CardEditorScreen(
         }
     }
     fun captureInsertion() { pendingInsert = MediaInsertPoint(activePiece, minOf(bodyController.start, bodyController.end)) }
-    val chooseInlineImage = {
-        captureInsertion()
-        try { inlinePicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
-        catch (_: Exception) { onPickerFailed() }
+    val drawNew = {
+        captureInsertion(); dismissKeyboard(); drawingBlockId = null; drawingSource = null
+        drawingKey = java.util.UUID.randomUUID().toString()
     }
+    val chooseInlineImage = {
+        captureInsertion(); dismissKeyboard(); galleryDestination = MediaDestination.CONTENT; galleryOpen = true
+    }
+    val chooseVideo = {
+        captureInsertion(); dismissKeyboard(); galleryDestination = MediaDestination.VIDEO; galleryOpen = true
+    }
+    val chooseAudio = { captureInsertion(); dismissKeyboard(); audioMenu = true }
+    val filePicker = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) onAttachFile?.invoke(uris) { blocks ->
+            blocks.forEach { block ->
+                insertBlock(block)
+                pendingInsert = MediaInsertPoint(block.id, 0)
+            }
+        }
+    }
+    val attachFile = {
+        captureInsertion(); dismissKeyboard()
+        try { filePicker.launch(arrayOf("*/*")) } catch (_: Exception) { onPickerFailed() }
+    }
+    val videoPicker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
+        if (uri != null) onAttachFile?.invoke(listOf(uri)) { blocks -> blocks.forEach(::insertBlock) }
+    }
+    val coverDocument = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) onImageSelected(uri)
+    }
+    val cameraContext = androidx.compose.ui.platform.LocalContext.current
+    val takePhoto = com.ontop.app.gallery.rememberCameraCapture(editorKey,
+        onCaptured = { name ->
+            if (cameraDestination == MediaDestination.COVER) onCameraCoverImport?.invoke(name)
+            else onCameraImport?.invoke(name) { path -> insertBlock(NoteMedia(offset = 0, kind = MediaKind.IMAGE, path = path)) }
+        }, onFailure = {
+            android.widget.Toast.makeText(cameraContext, "Не удалось открыть камеру. Проверьте наличие приложения камеры.", android.widget.Toast.LENGTH_LONG).show()
+        })
+    val takeVideo = com.ontop.app.gallery.rememberCameraCapture(editorKey,
+        onCaptured = { name -> onCapturedMediaImport?.invoke(name, ::insertBlock) },
+        onFailure = { android.widget.Toast.makeText(cameraContext, "Не удалось открыть видеокамеру.", android.widget.Toast.LENGTH_LONG).show() },
+        video = true)
     val imeOpen = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
     fun saveDocument() {
         onSaveChecklist?.let { save ->
@@ -218,7 +266,11 @@ internal fun CardEditorScreen(
                     }, focusAfter = focusAfter, onFocusHandled = { focusAfter = null },
                     onMoveCursor = { focusAfter = it }, onPaste = { pastedVideo = it },
                     minimumLines = if (noteType == NoteType.CHECKLIST) 2 else 12,
-                    placeholder = if (noteType == NoteType.CHECKLIST) "Описание (необязательно)" else "О чём хочется помнить?")
+                    placeholder = if (noteType == NoteType.CHECKLIST) "Описание (необязательно)" else "О чём хочется помнить?",
+                    onEditDrawing = { block ->
+                        dismissKeyboard(); drawingBlockId = block.id; drawingSource = block.path
+                        drawingKey = java.util.UUID.randomUUID().toString()
+                    })
                 if (noteType == NoteType.CHECKLIST) ChecklistEditor(checklist, { checklist = ArrayList(it) },
                     !saving, formScroll, checklistViewport)
             }
@@ -234,8 +286,16 @@ internal fun CardEditorScreen(
             if (bodyFocused || document.media.isNotEmpty()) RichFormatToolbar(
                 document.pieces().firstOrNull { it.key == activePiece }?.let(document::fragment) ?: RichDocument(),
                 bodyController, enabled = !saving,
+                onAttachFile = if (onAttachFile != null) attachFile else null,
                 onInsertImage = if (onInlineImport != null) chooseInlineImage else null,
-                onInsertVideo = { captureInsertion(); videoDialog = true })
+                onInsertVideo = chooseVideo, onInsertAudio = chooseAudio, onInsertDrawing = drawNew)
+            else FlowRow(Modifier.fillMaxWidth()) {
+                if (onAttachFile != null) EditorMediaAction("Прикрепить файл", R.drawable.ic_attachment, !saving, attachFile)
+                if (onInlineImport != null) EditorMediaAction("Фото +", R.drawable.ic_cover, !saving, chooseInlineImage)
+                EditorMediaAction("Видео +", R.drawable.ic_video, !saving, chooseVideo)
+                EditorMediaAction("Аудио +", R.drawable.ic_audio, !saving, chooseAudio)
+                TextButton(onClick = drawNew, enabled = !saving) { Text("Нарисовать") }
+            }
             pastedVideo?.let { proposal ->
                 FlowRow(Modifier.heightIn(max = 128.dp).verticalScroll(rememberScrollState())) {
                     TextButton(onClick = {
@@ -266,9 +326,54 @@ internal fun CardEditorScreen(
             }
         }
     }
+    if (galleryOpen) com.ontop.app.gallery.GalleryPicker(onDismiss = { galleryOpen = false }, destination = galleryDestination,
+        onSelect = { item ->
+            galleryOpen = false
+            if (galleryDestination == MediaDestination.COVER) onImageSelected(item.uri)
+            else if (item.video) onAttachFile?.invoke(listOf(item.uri)) { blocks -> blocks.forEach(::insertBlock) }
+            else onInlineImport?.invoke(item.uri) { path -> insertBlock(NoteMedia(offset = 0, kind = MediaKind.IMAGE, path = path)) }
+        }, onCamera = {
+            galleryOpen = false; cameraDestination = galleryDestination
+            if (galleryDestination == MediaDestination.VIDEO) takeVideo() else takePhoto()
+        },
+        onFile = {
+            galleryOpen = false
+            try {
+                if (galleryDestination == MediaDestination.COVER) coverDocument.launch(arrayOf("image/*"))
+                else filePicker.launch(arrayOf(if (galleryDestination == MediaDestination.VIDEO) "video/*" else "*/*"))
+            } catch (_: Exception) { onPickerFailed() }
+        }, onSystemPicker = {
+            galleryOpen = false
+            try {
+                when (galleryDestination) {
+                    MediaDestination.COVER -> picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
+                    MediaDestination.VIDEO -> videoPicker.launch(PickVisualMediaRequest(PickVisualMedia.VideoOnly))
+                    MediaDestination.CONTENT -> inlinePicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
+                }
+            } catch (_: Exception) { onPickerFailed() }
+        }, onYouTube = if (galleryDestination == MediaDestination.VIDEO) ({ galleryOpen = false; videoDialog = true }) else null)
+    if (audioMenu) AlertDialog(onDismissRequest = { audioMenu = false }, title = { Text("Аудио") }, text = {
+        Column {
+            TextButton(onClick = { audioMenu = false; audioRecording = true }) { Text("Записать аудио") }
+            TextButton(onClick = {
+                audioMenu = false
+                try { filePicker.launch(arrayOf("audio/*", "application/ogg")) } catch (_: Exception) { onPickerFailed() }
+            }) { Text("Выбрать аудиофайл") }
+        }
+    }, confirmButton = { TextButton(onClick = { audioMenu = false }) { Text("Закрыть") } })
+    if (audioRecording) com.ontop.app.media.AudioRecordingDialog(onDismiss = { audioRecording = false },
+        onInsert = { name -> audioRecording = false; onCapturedMediaImport?.invoke(name, ::insertBlock) })
     if (videoDialog) InsertVideoDialog(onInsert = { video ->
         insertBlock(NoteMedia(offset = 0, kind = MediaKind.YOUTUBE, video = video)); videoDialog = false
     }, onClose = { videoDialog = false })
+    drawingKey?.let { key -> com.ontop.app.drawing.DrawingEditor(key, drawingSource,
+        onDismiss = { drawingKey = null }, onSaved = { path ->
+            onInlineDraftPaths(setOf(path))
+            val blockId = drawingBlockId
+            if (blockId == null) insertBlock(NoteMedia(offset = 0, kind = MediaKind.IMAGE, path = path))
+            else document = document.copy(media = document.media.map { if (it.id == blockId) it.copy(path = path) else it })
+            drawingKey = null
+        }) }
     if (displayOpen) EditorDisplayDialog(imagePath, size, saving, chooseImage, onRemoveImage,
         onSize = { dismissKeyboard(); size = it }, onClose = { displayOpen = false })
     if (otherOpen) EditorOtherDialog(card != null, importance, progress, saving,

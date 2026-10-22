@@ -45,12 +45,13 @@ internal object OutgoingShare {
         try {
             val directory = File(context.cacheDir, "shared-notes").apply { check(isDirectory || mkdirs()) }
             // Keep copies while recipients may still be reading them; prune only our expired cache files.
-            directory.listFiles()?.filter { it.isFile && it.name.matches(Regex("[a-f0-9-]+\\.jpg")) &&
+            directory.listFiles()?.filter { it.isFile && it.name.matches(Regex("[a-f0-9-]+\\.(jpg|png)")) &&
                 System.currentTimeMillis() - it.lastModified() > 24 * 60 * 60 * 1000L }?.forEach { it.delete() }
-            copy = File(directory, "${UUID.randomUUID()}.jpg")
+            val png = image.endsWith(".png")
+            copy = File(directory, "${UUID.randomUUID()}.${if (png) "png" else "jpg"}")
             CardImageStore(context).resolve(image).inputStream().use { input -> copy.outputStream().use { input.copyTo(it) } }
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.shares", copy)
-            val attachment = Intent(send).setType("image/jpeg").putExtra(Intent.EXTRA_STREAM, uri)
+            val attachment = Intent(send).setType(if (png) "image/png" else "image/jpeg").putExtra(Intent.EXTRA_STREAM, uri)
             attachment.clipData = ClipData.newUri(context.contentResolver, "Изображение заметки", uri)
             attachment.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             PreparedShare(attachment)

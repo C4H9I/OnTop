@@ -59,7 +59,9 @@ internal fun CardEditorRoute(card: CardEntity?, state: BoardState, viewModel: Bo
     MaterialTheme(colorScheme = if ((card?.noteType ?: newNoteType) == NoteType.CHECKLIST) noteReadingColors() else MaterialTheme.colorScheme) {
     CardEditorScreen(card, state.saving || requestingPermission, state.error, state.draftImagePath,
         onImageSelected = viewModel::importImage, onRemoveImage = viewModel::removeDraftImage,
-        onInlineImport = viewModel::importInlineImage, onInlineDraftPaths = viewModel::trackInlineDraft,
+        onAttachFile = viewModel::importAttachments, onInlineImport = viewModel::importInlineImage,
+        onCameraImport = viewModel::importCameraPhoto, onCameraCoverImport = viewModel::importCameraCover,
+        onCapturedMediaImport = viewModel::importCapturedMedia, onInlineDraftPaths = viewModel::trackInlineDraft,
         onPickerFailed = viewModel::imagePickerFailed, onDismiss = onDismiss,
         onSave = { _, _, _ -> },
         availableTags = state.tags, initialTagIds = state.cardTags.filter { it.cardId == card?.id }.map { it.tagId },

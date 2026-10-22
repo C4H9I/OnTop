@@ -101,6 +101,8 @@ internal object AnalysisJson {
                 .name("documentBlockIndex").value(mediaIndexes[i]).name("sourceTextOffsetUtf16").value(media.offset)
             if (media.kind == MediaKind.IMAGE) {
                 json.name("assetId").value("image-${safeId(requireNotNull(media.path))}")
+            } else if (media.isAttachment) {
+                json.name("name").value(media.name).name("mime").value(media.mime).name("bytes").value(media.bytes)
             } else {
                 val video = requireNotNull(media.video)
                 json.name("url").value(video.source).name("watchUrl").value(video.watchUrl)

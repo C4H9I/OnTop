@@ -4,9 +4,16 @@ import java.net.URI
 import java.net.URLDecoder
 import java.util.UUID
 
-internal enum class MediaKind { IMAGE, YOUTUBE }
+internal enum class MediaKind { IMAGE, YOUTUBE, FILE, AUDIO, LOCAL_VIDEO }
 internal data class NoteMedia(val id: String = UUID.randomUUID().toString(), val offset: Int,
-    val kind: MediaKind, val path: String? = null, val video: YouTubeLink? = null) : java.io.Serializable
+    val kind: MediaKind, val path: String? = null, val video: YouTubeLink? = null,
+    val name: String? = null, val mime: String? = null, val bytes: Long = 0,
+    val durationMillis: Long? = null) : java.io.Serializable {
+    val isAttachment get() = kind in setOf(MediaKind.FILE, MediaKind.AUDIO, MediaKind.LOCAL_VIDEO)
+    // Old FILE blocks gain inline playback without rewriting their files or database rows.
+    val isAudio get() = kind == MediaKind.AUDIO || kind == MediaKind.FILE && mime.orEmpty().startsWith("audio/")
+    val isLocalVideo get() = kind == MediaKind.LOCAL_VIDEO || kind == MediaKind.FILE && mime.orEmpty().startsWith("video/")
+}
 
 internal data class YouTubeLink(val id: String, val seconds: Int = 0, val source: String) : java.io.Serializable {
     val watchUrl get() = "https://www.youtube.com/watch?v=$id" + if (seconds > 0) "&t=${seconds}s" else ""
@@ -93,3 +100,5 @@ internal fun RichDocument.removeMedia(id: String): RichDocument {
     } else this
     return separated.copy(media = separated.media.filterNot { it.id == id }).normalized()
 }
+
+internal fun RichDocument.resourcePaths(): Set<String> = media.mapNotNull { it.path }.toSet()

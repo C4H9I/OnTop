@@ -22,24 +22,27 @@ internal val LocalNoteMediaActive = compositionLocalOf { true }
 
 @Composable
 internal fun NoteMediaView(block: NoteMedia, modifier: Modifier = Modifier, onRemove: (() -> Unit)? = null,
-    active: Boolean = true, onConvertToLink: (() -> Unit)? = null) {
+    active: Boolean = true, onConvertToLink: (() -> Unit)? = null, onEditImage: (() -> Unit)? = null) {
     val mediaActive = active && LocalNoteMediaActive.current
     var fullImage by remember { mutableStateOf(false) }
     var imageMenu by remember { mutableStateOf(false) }
     var playing by remember { mutableStateOf(false) }
     LaunchedEffect(mediaActive) { if (!mediaActive) { playing = false; fullImage = false; imageMenu = false } }
+    if (block.isAttachment) { AttachmentView(block, modifier, onRemove, mediaActive); return }
     if (block.kind == MediaKind.YOUTUBE) {
         YouTubePreview(block.video!!, modifier.fillMaxWidth().testTag("media-${block.id}"),
             onPlay = { if (mediaActive) playing = true }, onRemove = onRemove, onConvertToLink = onConvertToLink)
     } else Box(modifier.fillMaxWidth().testTag("media-${block.id}")) {
         LocalCardImage(block.path!!, Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small)
             .testTag("inline-image-${block.id}").combinedClickable(
-                role = Role.Button, onClickLabel = "Открыть изображение",
-                onClick = { if (mediaActive) fullImage = true },
+                role = Role.Button, onClickLabel = if (onEditImage != null) "Действия с изображением" else "Открыть изображение",
+                onClick = { if (mediaActive) { if (onEditImage != null) imageMenu = true else fullImage = true } },
                 onLongClickLabel = if (onRemove != null) "Действия с изображением" else null,
                 onLongClick = if (onRemove != null) ({ if (mediaActive) imageMenu = true }) else null),
             contentScale = ContentScale.Fit, maxSide = 1000, adaptHeight = true)
         if (onRemove != null) DropdownMenu(expanded = imageMenu, onDismissRequest = { imageMenu = false }) {
+            if (onEditImage != null) DropdownMenuItem(text = { Text("Редактировать изображение") },
+                onClick = { imageMenu = false; onEditImage() })
             DropdownMenuItem(text = { Text("Открыть изображение") }, onClick = { imageMenu = false; fullImage = true })
             DropdownMenuItem(text = { Text("Удалить изображение из текста") },
                 modifier = Modifier.testTag("remove-media-${block.id}"),

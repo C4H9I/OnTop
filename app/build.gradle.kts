@@ -84,6 +84,9 @@ ksp {
 }
 
 dependencies {
+    // One shared engine for local audio, recording previews and local video.
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-ui:1.11.1")
     implementation(libs.androidx.glance.appwidget)
     // Same WorkManager version already used transitively by Glance 1.1.1.
     implementation("androidx.work:work-runtime-ktx:2.7.1")

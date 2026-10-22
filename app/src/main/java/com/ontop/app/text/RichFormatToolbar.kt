@@ -21,7 +21,8 @@ import androidx.compose.ui.window.PopupProperties
 
 @Composable
 internal fun RichFormatToolbar(document: RichDocument, controller: NativeRichController, enabled: Boolean,
-    onInsertImage: (() -> Unit)? = null, onInsertVideo: (() -> Unit)? = null) {
+    onInsertImage: (() -> Unit)? = null, onInsertVideo: (() -> Unit)? = null, onInsertDrawing: (() -> Unit)? = null,
+    onAttachFile: (() -> Unit)? = null, onInsertAudio: (() -> Unit)? = null) {
     val start = controller.start
     val end = controller.end
     val selection = start != end
@@ -70,9 +71,21 @@ internal fun RichFormatToolbar(document: RichDocument, controller: NativeRichCon
         }
         TextButton(onClick = { controller.clear() }, enabled = enabled && selection,
             modifier = Modifier.focusProperties { canFocus = false }.semantics { contentDescription = "Очистить форматирование" }) { Text("Tx") }
-        if (onInsertImage != null) TextButton(onClick = onInsertImage, enabled = enabled,
-            modifier = Modifier.focusProperties { canFocus = false }.semantics { contentDescription = "Вставить изображение" }) { Text("Фото +") }
-        if (onInsertVideo != null) TextButton(onClick = onInsertVideo, enabled = enabled,
-            modifier = Modifier.focusProperties { canFocus = false }.semantics { contentDescription = "Вставить видео" }) { Text("Видео +") }
+        if (onAttachFile != null) EditorMediaAction("Прикрепить файл", R.drawable.ic_attachment, enabled, onAttachFile)
+        if (onInsertImage != null) EditorMediaAction("Фото +", R.drawable.ic_cover, enabled, onInsertImage, "Вставить изображение")
+        if (onInsertVideo != null) EditorMediaAction("Видео +", R.drawable.ic_video, enabled, onInsertVideo, "Вставить видео")
+        if (onInsertAudio != null) EditorMediaAction("Аудио +", R.drawable.ic_audio, enabled, onInsertAudio)
+        if (onInsertDrawing != null) TextButton(onClick = onInsertDrawing, enabled = enabled,
+            modifier = Modifier.focusProperties { canFocus = false }) { Text("Нарисовать") }
+    }
+}
+
+@Composable
+internal fun EditorMediaAction(label: String, icon: Int, enabled: Boolean, onClick: () -> Unit, description: String = label) {
+    TextButton(onClick = onClick, enabled = enabled,
+        modifier = Modifier.focusProperties { canFocus = false }.semantics { contentDescription = description }) {
+        Icon(painterResource(icon), null, Modifier.size(18.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(label)
     }
 }

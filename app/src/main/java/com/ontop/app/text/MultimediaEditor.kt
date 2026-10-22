@@ -19,7 +19,8 @@ internal fun MultimediaEditor(document: RichDocument, onChange: (RichDocument) -
     onActive: (String, NativeRichController, Boolean) -> Unit,
     focusAfter: MediaInsertPoint?, onFocusHandled: () -> Unit,
     onMoveCursor: (MediaInsertPoint) -> Unit, onPaste: (VideoPaste) -> Unit,
-    minimumLines: Int = 12, placeholder: String = "О чём хочется помнить?") {
+    minimumLines: Int = 12, placeholder: String = "О чём хочется помнить?",
+    onEditDrawing: ((NoteMedia) -> Unit)? = null) {
     val current by rememberUpdatedState(document)
     val change by rememberUpdatedState(onChange)
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -58,7 +59,10 @@ internal fun MultimediaEditor(document: RichDocument, onChange: (RichDocument) -
             }
             document.media.getOrNull(piece.index)?.let { block ->
                 Column(Modifier.testTag("editor-block-${block.id}")) {
-                    NoteMediaView(block, onRemove = if (enabled) ({
+                    if (enabled && block.path?.let(com.ontop.app.drawing.DrawingStore::isDrawing) == true && onEditDrawing != null)
+                        TextButton(onClick = { onEditDrawing(block) }) { Text("Редактировать рисунок") }
+                    NoteMediaView(block, onEditImage = if (enabled && onEditDrawing != null && block.kind == MediaKind.IMAGE) ({ onEditDrawing(block) }) else null,
+                        onRemove = if (enabled) ({
                         val index = current.media.indexOfFirst { it.id == block.id }
                         if (index >= 0) {
                             val before = current.pieces()[index]

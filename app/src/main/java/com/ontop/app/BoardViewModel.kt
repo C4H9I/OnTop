@@ -26,7 +26,7 @@ import androidx.room.withTransaction
 import com.ontop.app.data.NoteInteractionRepository
 import com.ontop.app.data.NoteInteractionType
 import com.ontop.app.text.RichTextCodec
-import com.ontop.app.text.imagePaths
+import com.ontop.app.text.resourcePaths
 import com.ontop.app.backup.BackupManager
 
 data class BoardState(
@@ -116,6 +116,55 @@ class BoardViewModel internal constructor(
         onImported(path)
     }
 
+    internal fun importCameraPhoto(name: String, onImported: (String) -> Unit) = write({},
+        "Не удалось сохранить фотографию. Проверьте свободное место и повторите съёмку.") {
+        val captures = com.ontop.app.gallery.CameraCaptureStore(getApplication())
+        try {
+            val path = images.import(captures.uri(name))
+            inlineDraftPaths.add(path)
+            onImported(path)
+        } finally {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { captures.delete(name) }
+        }
+    }
+
+    internal fun importAttachments(uris: List<Uri>, onImported: (List<com.ontop.app.text.NoteMedia>) -> Unit) = write({},
+        "Не удалось прикрепить файлы. Максимальный размер файла — 256 МиБ. Проверьте доступность документов и свободное место.") {
+        val imported = mutableListOf<com.ontop.app.text.NoteMedia>()
+        try {
+            for (uri in uris) {
+                val block = AttachmentStore(getApplication()).import(uri)
+                imported.add(block)
+                inlineDraftPaths.add(block.path!!)
+            }
+            onImported(imported)
+        } catch (error: Throwable) {
+            imported.forEach { images.delete(it.path); inlineDraftPaths.remove(it.path) }
+            throw error
+        }
+    }
+
+    internal fun importCameraCover(name: String) = write({}) {
+        val captures = com.ontop.app.gallery.CameraCaptureStore(getApplication())
+        try {
+            val path = images.import(captures.uri(name))
+            val previous = mutableState.value.draftImagePath
+            mutableState.update { it.copy(draftImagePath = path) }
+            if (previous != originalImagePath) removeImage(previous)
+        } finally { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { captures.delete(name) } }
+    }
+
+    internal fun importCapturedMedia(name: String, onImported: (com.ontop.app.text.NoteMedia) -> Unit) = write({},
+        "Не удалось сохранить запись. Проверьте свободное место и размер файла (до 256 МиБ).") {
+        val captures = com.ontop.app.gallery.CameraCaptureStore(getApplication())
+        try {
+            var block = AttachmentStore(getApplication()).import(captures.uri(name))
+            if (name.endsWith(".m4a")) block = block.copy(name = "Голосовая заметка.m4a")
+            inlineDraftPaths.add(block.path!!)
+            onImported(block)
+        } finally { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { captures.delete(name) } }
+    }
+
     fun beginImageEdit(card: CardEntity?, restoredDraftPath: String? = null) {
         if (imageEditorActive) return
         imageEditorActive = true
@@ -152,7 +201,7 @@ class BoardViewModel internal constructor(
     private suspend fun removeImage(path: String?) {
         try {
             if (path != null && dao.allCards().any { card -> card.imagePath == path ||
-                    path in RichTextCodec.decode(card.description, card.formatting).imagePaths() }) return
+                    path in RichTextCodec.decode(card.description, card.formatting).resourcePaths() }) return
             images.delete(path)
         } catch (error: CancellationException) { throw error
         } catch (_: Exception) {
@@ -302,7 +351,7 @@ class BoardViewModel internal constructor(
             val before = card?.let { interactions.snapshot(it.id) }
             reminders.saveNote(complete, card == null, reminder, reminderChanged, tagIds, newTagNames,
                 onSaved = { id -> interactions.recordEditIfChanged(before, id) })
-            val oldInline = card?.let { RichTextCodec.decode(it.description, it.formatting).imagePaths() }.orEmpty()
+            val oldInline = card?.let { RichTextCodec.decode(it.description, it.formatting).resourcePaths() }.orEmpty()
             (oldInline + inlineDraftPaths).forEach { removeImage(it) }
             inlineDraftPaths.clear()
             // The previous file remains usable until the new database reference has committed.
@@ -352,7 +401,7 @@ class BoardViewModel internal constructor(
         reminders.deleteCard(actual)
         refreshWidgets(actual.id)
         removeImage(actual.imagePath)
-        RichTextCodec.decode(actual.description, actual.formatting).imagePaths().forEach { removeImage(it) }
+        RichTextCodec.decode(actual.description, actual.formatting).resourcePaths().forEach { removeImage(it) }
         inlineDraftPaths.toList().forEach { removeImage(it) }
         inlineDraftPaths.clear()
         val draft = mutableState.value.draftImagePath

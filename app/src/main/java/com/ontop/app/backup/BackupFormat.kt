@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import com.ontop.app.data.*
 import com.ontop.app.reminders.schedule
 import com.ontop.app.text.*
+import com.ontop.app.drawing.*
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -25,19 +26,23 @@ internal data class BackupData(val cards: List<CardEntity>, val comments: List<C
             interactions = interactions.filter { it.noteId in ids })
     }
     fun paths(): Set<String> = cards.flatMap { card ->
-        listOfNotNull(card.imagePath) + RichTextCodec.decode(card.description, card.formatting).imagePaths()
+        listOfNotNull(card.imagePath) + RichTextCodec.decode(card.description, card.formatting).resourcePaths()
     }.toSet()
 }
 
 internal data class BackupLimits(val archive: Long = 512L * 1024 * 1024,
     val unpacked: Long = 512L * 1024 * 1024, val image: Long = 16L * 1024 * 1024,
-    val json: Long = 32L * 1024 * 1024, val entries: Int = 10002)
+    val json: Long = 32L * 1024 * 1024, val entries: Int = 10002,
+    val attachment: Long = AttachmentStore.MAX_BYTES) {
+    fun resource(path: String) = if (AttachmentStore.validPath(path)) attachment else image
+}
 
 /** A logical export, independent of SQLite schema/version and Android filesystem locations. */
 internal object BackupFormat {
-    const val VERSION = 6
-    private val imageName = Regex("images/[a-f0-9-]{1,64}\\.jpg")
+    const val VERSION = 11
+    private val imageName = Regex("images/[a-f0-9-]{1,64}\\.(jpg|png)")
     fun validPath(path: String): Boolean = imageName.matches(path)
+    fun validResource(path: String): Boolean = AttachmentStore.validPath(path) || validPath(path) || Regex("images/[a-f0-9-]{1,64}\\.(drawing\\.json|source)").matches(path)
     private fun JSONObject.required(name: String): Any { require(has(name)); return get(name) }
     private fun JSONObject.string(name: String, maximum: Int = 1_048_576): String =
         (required(name) as? String)?.also { require(it.length <= maximum) } ?: error("Invalid $name")
@@ -82,7 +87,7 @@ internal object BackupFormat {
     fun document(text: String, formatting: String?): RichDocument {
         if (formatting == null) return RichDocument(text)
         val json = objectFrom(formatting)
-        val version = json.int("v"); require(version in 1..2)
+        val version = json.int("v"); require(version in 1..4)
         val ranges = json.list("ranges", 100_000).map { range ->
             val kind = RichKind.valueOf(range.string("k", 30))
             val start = range.int("s"); val end = range.int("e")
@@ -100,6 +105,15 @@ internal object BackupFormat {
             if (kind == MediaKind.IMAGE) {
                 val path = block.string("path", 100); require(validPath(path))
                 NoteMedia(id, at, kind, path = path)
+            } else if (kind in setOf(MediaKind.FILE, MediaKind.AUDIO, MediaKind.LOCAL_VIDEO)) {
+                val path = block.string("path", 100); require(AttachmentStore.validPath(path))
+                val name = block.string("name", 1024); require(name.isNotBlank())
+                val mime = block.string("mime", 255)
+                val bytes = block.number("bytes"); require(bytes in 0..BackupLimits().attachment)
+                if (kind == MediaKind.AUDIO) require(mime.startsWith("audio/"))
+                if (kind == MediaKind.LOCAL_VIDEO) require(mime.startsWith("video/"))
+                val duration = if (block.has("duration")) block.number("duration").also { require(it >= 0) } else null
+                NoteMedia(id, at, kind, path = path, name = name, mime = mime, bytes = bytes, durationMillis = duration)
             } else NoteMedia(id, at, kind, video = YouTubeLink.parse(block.string("url", 8192)) ?: error("Invalid YouTube URL"))
         }
         require(media.map { it.id }.distinct().size == media.size)
@@ -222,9 +236,16 @@ internal object BackupFormat {
         val data = source.withoutTrash()
         val bytes = encode(data); require(bytes.size <= limits.json)
         decode(bytes) // Never produce a backup that this version cannot read.
-        val paths = data.paths().sorted(); require(paths.size + 2 <= limits.entries)
+        data.cards.flatMap { document(it.description, it.formatting).media }.filter { it.isAttachment }.forEach {
+            require(image(it.path!!).length() == it.bytes)
+        }
+        data.paths().filter(DrawingStore::isDrawing).forEach { DrawingStore.validateResources(it, image) }
+        val paths = data.paths().flatMap(DrawingStore::resources)
+            .filter { !it.endsWith(".source") || image(it).isFile }.sorted(); require(paths.size + 2 <= limits.entries)
         val files = paths.associateWith { path -> image(path).also {
-            require(it.isFile && it.length() <= limits.image); checkImage(it)
+            require(it.isFile && it.length() <= limits.resource(path))
+            if (path.endsWith(".json")) { require(it.length() <= 8_000_000); DrawingCodec.decode(it.readText(Charsets.UTF_8)) }
+            else if (!AttachmentStore.validPath(path)) checkImage(it)
         } }
         val inventory = JSONArray().put(JSONObject().put("path", "data.json").put("bytes", bytes.size).put("sha256", digest(bytes)))
         var total = bytes.size.toLong()
@@ -241,7 +262,7 @@ internal object BackupFormat {
             }
             entry("manifest.json", manifest.inputStream(), 4L * 1024 * 1024)
             entry("data.json", bytes.inputStream(), limits.json)
-            files.forEach { (path, file) -> entry(path, file.inputStream(), limits.image) }
+            files.forEach { (path, file) -> entry(path, file.inputStream(), limits.resource(path)) }
         }
     }
 
@@ -259,9 +280,9 @@ internal object BackupFormat {
             val entries = zip.entries()
             while (entries.hasMoreElements()) {
                 val entry = entries.nextElement(); val name = entry.name
-                require(!entry.isDirectory && (name in listOf("manifest.json", "data.json") || validPath(name))) { "Недопустимый путь в архиве." }
+                require(!entry.isDirectory && (name in listOf("manifest.json", "data.json") || validResource(name))) { "Недопустимый путь в архиве." }
                 require(name !in extracted && extracted.size < limits.entries) { "Повторяющиеся или лишние файлы." }
-                val maximum = when (name) { "manifest.json" -> 4L * 1024 * 1024; "data.json" -> limits.json; else -> limits.image }
+                val maximum = when (name) { "manifest.json" -> 4L * 1024 * 1024; "data.json" -> limits.json; else -> limits.resource(name) }
                 require(entry.size in 0..maximum)
                 val file = File(target, name)
                 require(file.canonicalPath.startsWith(target.canonicalPath + File.separator))
@@ -297,15 +318,23 @@ internal object BackupFormat {
         val data = decode(File(target, "data.json").readBytes(), requireTags = archiveVersion >= 2,
             requireStatus = archiveVersion >= 3, requireProgress = archiveVersion >= 4, requireInteractions = archiveVersion >= 5,
             requireChecklist = archiveVersion >= 6)
-        require(data.paths() == extracted.keys - setOf("manifest.json", "data.json")) { "В архиве отсутствуют изображения или есть лишние файлы." }
-        data.paths().forEach { path -> checkImage(File(target, path)) }
+        require(data.paths().flatMap(DrawingStore::resources).filter { !it.endsWith(".source") || it in extracted }.toSet() == extracted.keys - setOf("manifest.json", "data.json")) { "В архиве отсутствуют медиафайлы или есть лишние файлы." }
+        data.paths().filterNot(AttachmentStore::validPath).forEach { path -> checkImage(File(target, path)) }
+        data.cards.flatMap { document(it.description, it.formatting).media }.filter { it.isAttachment }.forEach {
+            require(File(target, it.path!!).length() == it.bytes)
+        }
+        data.paths().filter(DrawingStore::isDrawing).forEach { path ->
+            DrawingStore.validateResources(path) { File(target, it) }
+        }
         return data
     }
 
     private fun checkImage(file: File) {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, bounds)
-        require(bounds.outMimeType == "image/jpeg" && bounds.outWidth in 1..4096 && bounds.outHeight in 1..4096)
+        if (file.extension == "source") {
+            require(bounds.outMimeType in setOf("image/jpeg", "image/png", "image/webp") && bounds.outWidth in 1..30000 && bounds.outHeight in 1..30000 && bounds.outWidth.toLong() * bounds.outHeight <= 100_000_000)
+        } else require(bounds.outMimeType == (if (file.extension == "png") "image/png" else "image/jpeg") && bounds.outWidth in 1..4096 && bounds.outHeight in 1..4096)
         val bitmap = BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = 16 })
             ?: error("Повреждено изображение.")
         bitmap.recycle()
