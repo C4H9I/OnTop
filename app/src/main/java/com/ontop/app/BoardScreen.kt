@@ -6,6 +6,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.material3.Icon
 import androidx.compose.ui.res.painterResource
 import com.ontop.app.data.NoteType
@@ -23,7 +27,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridS
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -44,9 +48,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -84,6 +96,7 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
     var tagsOpen by rememberSaveable { mutableStateOf(false) }
     var collection by rememberSaveable { mutableStateOf<com.ontop.app.data.CardStatus?>(null) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
     val percentNoteId = rememberSaveable { mutableStateOf<Long?>(null) }
     var sharedDraft by rememberSaveable { mutableStateOf<IncomingShare?>(null) }
     var sharedImagePath by rememberSaveable { mutableStateOf<String?>(null) }
@@ -95,7 +108,7 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
     LaunchedEffect(revision) {
         if (seenRevision != revision) {
             editorOpen = false; editing = false; selectedId = null; sliderOpen = false; tagsOpen = false
-            collection = null
+            collection = null; searchOpen = false; searchQuery = ""
             percentNoteId.value = null
             sharedDraft = null; sharedImagePath = null
             viewModel.sliderSession.currentId = null; viewModel.sliderSession.index = 0
@@ -104,9 +117,13 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
     }
     val gridState = rememberLazyStaggeredGridState()
     val selected = state.storedCards.firstOrNull { it.id == selectedId }
-    val filteredCards = remember(state.cards, state.cardTags, state.selectedTagId, searchQuery) {
-        if (searchQuery.isBlank()) filterCardsByTag(state.cards, state.cardTags, state.selectedTagId)
+    val filteredCards = remember(state.cards, state.cardTags, state.selectedTagId, searchOpen, searchQuery) {
+        if (!searchOpen) filterCardsByTag(state.cards, state.cardTags, state.selectedTagId)
         else searchBoardCards(state.cards, searchQuery)
+    }
+    val searchGridState = rememberLazyStaggeredGridState()
+    BackHandler(searchOpen && !editorOpen && !sliderOpen && collection == null && !settingsOpen) {
+        searchOpen = false; searchQuery = ""
     }
 
     // A widget launch waits for the user to save or discard the active draft.
@@ -164,6 +181,10 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
         return
     }
     if ((!editorOpen || !editing) && (!sliderOpen || editorOpen)) BoardContent(state, gridState = gridState,
+        searchGridState = searchGridState, searchOpen = searchOpen,
+        onSearchOpen = { searchOpen = true; searchQuery = "" },
+        onSearchClose = { searchOpen = false; searchQuery = "" },
+        showBottomBar = !editorOpen,
         searchQuery = searchQuery, onSearchQueryChange = { searchQuery = it }, onAdd = {
         newNoteType = NoteType.NOTE
         selectedId = null
@@ -231,60 +252,63 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
 @Composable
 internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEntity) -> Unit,
     gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(), onView: () -> Unit = {},
+    searchGridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(),
+    searchOpen: Boolean = false, onSearchOpen: () -> Unit = {}, onSearchClose: () -> Unit = {},
+    showBottomBar: Boolean = true,
     searchQuery: String = "", onSearchQueryChange: (String) -> Unit = {},
     onSettings: () -> Unit = {}, onSort: (BoardSort) -> Unit = {},
     onSelectTag: (Long?) -> Unit = {}, onManageTags: () -> Unit = {},
     onCollection: (com.ontop.app.data.CardStatus) -> Unit = {}, onPercentages: (CardEntity) -> Unit = {},
     onAddChecklist: () -> Unit = {}) {
     val displayedCards = remember(state.cards, state.sortMode, state.cardTags, state.selectedTagId, searchQuery) {
-        val matching = if (searchQuery.isBlank()) filterCardsByTag(state.cards, state.cardTags, state.selectedTagId)
+        val matching = if (!searchOpen) filterCardsByTag(state.cards, state.cardTags, state.selectedTagId)
             else searchBoardCards(state.cards, searchQuery)
         sortedBoardCards(matching, state.sortMode)
     }
     var previousSort by remember { mutableStateOf(state.sortMode) }
     var previousTag by remember { mutableStateOf(state.selectedTagId) }
-    LaunchedEffect(state.sortMode, state.selectedTagId, searchQuery) {
-        if (previousSort != state.sortMode || previousTag != state.selectedTagId || searchQuery.isNotBlank()) gridState.scrollToItem(0)
+    LaunchedEffect(state.sortMode, state.selectedTagId) {
+        if (previousSort != state.sortMode || previousTag != state.selectedTagId) gridState.scrollToItem(0)
         previousSort = state.sortMode
         previousTag = state.selectedTagId
+    }
+    LaunchedEffect(searchQuery) { if (searchOpen) searchGridState.scrollToItem(0) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(searchOpen, showBottomBar) {
+        if (searchOpen && showBottomBar) { focusRequester.requestFocus(); keyboard?.show() }
+        else keyboard?.hide()
     }
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
-            Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp, androidx.compose.ui.Alignment.End)) {
-            FloatingActionButton(
-                onClick = onAdd,
-                containerColor = Forest,
-                contentColor = Color.White,
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.semantics { contentDescription = "Создать карточку" }
-            ) { Icon(painterResource(R.drawable.ic_add_note), "Обычная заметка") }
-            FloatingActionButton(onClick = onAddChecklist, containerColor = Forest, contentColor = Color.White,
-                shape = RoundedCornerShape(20.dp), modifier = Modifier.semantics { contentDescription = "Создать чек-лист" }) {
-                Icon(painterResource(R.drawable.ic_checklist), null)
-            }
-            }
+            if (showBottomBar) BoardBottomBar(searchOpen, onSearchClose, onSearchOpen, onAdd, onAddChecklist, onSettings)
         }
     ) { innerPadding ->
         Column(Modifier.fillMaxSize().padding(innerPadding).consumeWindowInsets(innerPadding)) {
-            BoardHeader(onSettings, state.sortMode, onSort, !state.loading, onCollection, onView)
-            OutlinedTextField(value = searchQuery, onValueChange = onSearchQueryChange,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("board-search"),
-                label = { Text("Поиск по заметкам") },
-                placeholder = { Text("Название или содержимое") },
-                singleLine = true,
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) TextButton(onClick = { onSearchQueryChange("") }) { Text("Очистить") }
-                })
-            if (searchQuery.isBlank()) TopicFilter(state, onSelectTag, onManageTags)
+            if (searchOpen) {
+                Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onSearchClose) { Text("Назад") }
+                    OutlinedTextField(value = searchQuery, onValueChange = onSearchQueryChange,
+                        modifier = Modifier.weight(1f).focusRequester(focusRequester).testTag("board-search"),
+                        placeholder = { Text("Название или содержимое") },
+                        singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) TextButton(onClick = { onSearchQueryChange("") }) { Text("Очистить") }
+                        })
+                }
+            } else {
+                BoardHeader(onSettings, state.sortMode, onSort, !state.loading, onCollection, onView)
+                TopicFilter(state, onSelectTag, onManageTags)
+            }
             if (state.error != null) {
                 Text(state.error, color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(horizontal = 20.dp))
             }
             when {
                 state.loading -> Text("Загружаем карточки…", Modifier.padding(20.dp))
-                displayedCards.isEmpty() && searchQuery.isNotBlank() -> Column(Modifier.padding(20.dp)) {
+                displayedCards.isEmpty() && searchOpen && searchQuery.isNotBlank() -> Column(Modifier.padding(20.dp)) {
                     Text("Ничего не найдено", style = MaterialTheme.typography.titleLarge)
                     Text("Попробуйте изменить запрос или очистить поиск.", modifier = Modifier.padding(top = 12.dp))
                     TextButton(onClick = { onSearchQueryChange("") }) { Text("Очистить поиск") }
@@ -303,10 +327,10 @@ internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnt
                     // Keep two columns on a normal phone; don't squeeze enlarged type into tiny lanes.
                     val columns = if ((maxWidth.value - 32f) / 2 >= 100f * LocalDensity.current.fontScale) 2 else 1
                     LazyVerticalStaggeredGrid(
-                        state = gridState,
+                        state = if (searchOpen) searchGridState else gridState,
                         columns = StaggeredGridCells.Fixed(columns),
                         modifier = Modifier.fillMaxSize().testTag("card-board"),
-                        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 96.dp),
+                        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalItemSpacing = 8.dp
                     ) {
@@ -318,6 +342,40 @@ internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnt
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun BoardBottomBar(searchOpen: Boolean, onHome: () -> Unit, onSearch: () -> Unit,
+    onAdd: () -> Unit, onChecklist: () -> Unit, onSettings: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 8.dp) {
+        Row(Modifier.fillMaxWidth().navigationBarsPadding().height(60.dp).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceEvenly) {
+            BoardBottomAction("Главная", R.drawable.ic_home, !searchOpen, onHome, Modifier.weight(1f))
+            BoardBottomAction("Поиск", R.drawable.ic_search, searchOpen, onSearch, Modifier.weight(1f))
+            Column(Modifier.weight(1f).height(56.dp).clickable(role = Role.Button, onClick = onAdd).testTag("nav-add")
+                .semantics { contentDescription = "Добавить заметку" }, horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center) {
+                Box(Modifier.size(38.dp).background(Forest, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                    Icon(painterResource(R.drawable.ic_add_note), null, tint = Color.White)
+                }
+                Text("Добавить", style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            }
+            BoardBottomAction("Чек-лист", R.drawable.ic_checklist, false, onChecklist, Modifier.weight(1f))
+            BoardBottomAction("Настройки", R.drawable.ic_settings, false, onSettings, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun BoardBottomAction(label: String, icon: Int, selected: Boolean, onClick: () -> Unit, modifier: Modifier) {
+    Column(modifier.height(56.dp).clickable(role = Role.Button, onClick = onClick).testTag("nav-$label")
+        .semantics { contentDescription = label; this.selected = selected },
+        verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(painterResource(icon), null, tint = if (selected) Forest else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(24.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1,
+            color = if (selected) Forest else MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -342,7 +400,8 @@ private fun ThoughtTile(card: CardEntity, onClick: () -> Unit, onPercentages: ()
         )
     ) {
         Box {
-            CardVisual(card, Modifier.testTag("tile-visual-${card.id}"), minHeight = minHeight)
+            CardVisual(card, Modifier.testTag("tile-visual-${card.id}"), minHeight = minHeight,
+                maxTitleLines = if (card.size == CardSize.WIDE) 4 else 5)
             NoteStatusIndicator(card.importance, card.progress,
                 Modifier.align(Alignment.TopEnd).padding(8.dp).testTag("tile-status-${card.id}"),
                 variant = StatusIndicatorSize.Compact, enabled = enabled, onClick = onPercentages)

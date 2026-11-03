@@ -11,6 +11,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.test.*
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -19,6 +20,8 @@ import androidx.room.Room
 import androidx.test.platform.app.InstrumentationRegistry
 import com.ontop.app.backup.BackupManager
 import com.ontop.app.data.*
+import com.ontop.app.text.RichKind
+import com.ontop.app.text.RichTextCodec
 import com.ontop.app.ui.theme.OnTopTheme
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
@@ -49,9 +52,14 @@ class ChecklistEditorTest {
             } } }
             compose.onNodeWithContentDescription("Создать чек-лист").performClick()
             compose.onNodeWithTag("editor-title").performTextInput("Покупки")
+            compose.onNodeWithTag("editor-description").performTextInput("Важное описание")
+            compose.onNodeWithTag("editor-description").performTextInputSelection(TextRange(0, 6))
+            compose.onNodeWithContentDescription("Жирный").performScrollTo().performClick()
+            compose.onNodeWithTag("format-media").assertExists()
             compose.onNodeWithTag("checklist-add-last").performScrollTo().performClick()
             compose.onNodeWithText("Пункт").performTextInput("Последний")
-            compose.onNodeWithTag("checklist-add-first").performScrollTo().performClick()
+            compose.onAllNodesWithContentDescription("Действия с пунктом").onFirst().performScrollTo().performClick()
+            compose.onNodeWithText("Добавить пункт выше").performClick()
             compose.onNodeWithText("Пункт").performTextInput("Первый")
             val screenshot = File(app.getExternalFilesDir(null), "checklists/editor-360dp.png")
             screenshot.parentFile!!.mkdirs()
@@ -62,6 +70,8 @@ class ChecklistEditorTest {
             compose.onNodeWithTag("editor-save").performClick()
             compose.waitUntil(10000) { model.state.value.cards.any { it.noteType == NoteType.CHECKLIST } }
             var note = model.state.value.cards.single { it.noteType == NoteType.CHECKLIST }
+            assertEquals("Важное описание", note.description)
+            assertTrue(RichTextCodec.decode(note.description, note.formatting).has(RichKind.BOLD, 0, 6))
             assertEquals(listOf("Первый", "Последний"), note.checklistItems().map { it.text })
             assertEquals(0, note.progress)
             compose.onNodeWithText("Покупки").performClick()

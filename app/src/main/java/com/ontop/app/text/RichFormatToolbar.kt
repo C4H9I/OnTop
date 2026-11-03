@@ -22,7 +22,9 @@ import androidx.compose.ui.window.PopupProperties
 @Composable
 internal fun RichFormatToolbar(document: RichDocument, controller: NativeRichController, enabled: Boolean,
     onInsertImage: (() -> Unit)? = null, onInsertVideo: (() -> Unit)? = null, onInsertDrawing: (() -> Unit)? = null,
-    onAttachFile: (() -> Unit)? = null, onInsertAudio: (() -> Unit)? = null) {
+    onAttachFile: (() -> Unit)? = null, onInsertAudio: (() -> Unit)? = null, onDone: (() -> Unit)? = null,
+    onMediaOpen: (() -> Unit)? = null, onMediaDismiss: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null) {
     val start = controller.start
     val end = controller.end
     val selection = start != end
@@ -30,6 +32,10 @@ internal fun RichFormatToolbar(document: RichDocument, controller: NativeRichCon
     var colors by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp)
         .testTag("format-toolbar"), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (onDone != null) TextButton(onClick = onDone, enabled = enabled,
+            modifier = Modifier.focusProperties { canFocus = false }.widthIn(min = 48.dp)) { Text("Готово") }
+        if (onMediaOpen != null) EditorMediaMenu(enabled, onAttachFile, onInsertImage, onInsertVideo,
+            onInsertAudio, onInsertDrawing, onMediaOpen, onMediaDismiss ?: {})
         @Composable fun Action(label: String, symbol: String, kind: RichKind, style: androidx.compose.ui.text.TextStyle = LocalTextStyle.current) {
             val active = document.has(kind, start, end)
             TextButton(onClick = { controller.format(kind) }, enabled = enabled && (kind.block || selection),
@@ -71,12 +77,45 @@ internal fun RichFormatToolbar(document: RichDocument, controller: NativeRichCon
         }
         TextButton(onClick = { controller.clear() }, enabled = enabled && selection,
             modifier = Modifier.focusProperties { canFocus = false }.semantics { contentDescription = "Очистить форматирование" }) { Text("Tx") }
-        if (onAttachFile != null) EditorMediaAction("Прикрепить файл", R.drawable.ic_attachment, enabled, onAttachFile)
-        if (onInsertImage != null) EditorMediaAction("Фото +", R.drawable.ic_cover, enabled, onInsertImage, "Вставить изображение")
-        if (onInsertVideo != null) EditorMediaAction("Видео +", R.drawable.ic_video, enabled, onInsertVideo, "Вставить видео")
-        if (onInsertAudio != null) EditorMediaAction("Аудио +", R.drawable.ic_audio, enabled, onInsertAudio)
-        if (onInsertDrawing != null) TextButton(onClick = onInsertDrawing, enabled = enabled,
-            modifier = Modifier.focusProperties { canFocus = false }) { Text("Нарисовать") }
+        if (onSettings != null) IconButton(onClick = onSettings, enabled = enabled,
+            modifier = Modifier.size(48.dp).focusProperties { canFocus = false }.testTag("editor-settings-compact")) {
+            Icon(painterResource(R.drawable.ic_sliders), contentDescription = "Настройки заметки")
+        }
+        if (onMediaOpen == null) {
+            if (onAttachFile != null) EditorMediaAction("Прикрепить файл", R.drawable.ic_attachment, enabled, onAttachFile)
+            if (onInsertImage != null) EditorMediaAction("Фото +", R.drawable.ic_cover, enabled, onInsertImage, "Вставить изображение")
+            if (onInsertVideo != null) EditorMediaAction("Видео +", R.drawable.ic_video, enabled, onInsertVideo, "Вставить видео")
+            if (onInsertAudio != null) EditorMediaAction("Аудио +", R.drawable.ic_audio, enabled, onInsertAudio)
+            if (onInsertDrawing != null) TextButton(onClick = onInsertDrawing, enabled = enabled,
+                modifier = Modifier.focusProperties { canFocus = false }) { Text("Нарисовать") }
+        }
+    }
+}
+
+@Composable
+internal fun EditorMediaMenu(enabled: Boolean, onFile: (() -> Unit)?, onPhoto: (() -> Unit)?,
+    onVideo: (() -> Unit)?, onAudio: (() -> Unit)?, onDrawing: (() -> Unit)?,
+    onOpen: () -> Unit = {}, onDismiss: () -> Unit = {}) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { onOpen(); open = true }, enabled = enabled,
+            modifier = Modifier.size(48.dp).focusProperties { canFocus = false }.testTag("format-media")) {
+            Icon(painterResource(R.drawable.ic_attachment), contentDescription = "Медиа")
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false; onDismiss() },
+            modifier = Modifier.heightIn(max = 280.dp), containerColor = MaterialTheme.colorScheme.surface,
+            properties = PopupProperties(focusable = false)) {
+            @Composable fun Item(label: String, action: (() -> Unit)?) {
+                if (action != null) DropdownMenuItem(text = { Text(label) }, onClick = {
+                    open = false; action(); onDismiss()
+                })
+            }
+            Item("Фото", onPhoto)
+            Item("Видео", onVideo)
+            Item("Аудио", onAudio)
+            Item("Файл", onFile)
+            Item("Рисунок", onDrawing)
+        }
     }
 }
 

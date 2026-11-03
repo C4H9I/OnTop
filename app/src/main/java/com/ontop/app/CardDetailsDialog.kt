@@ -14,6 +14,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.Color
+import com.ontop.app.ui.theme.Forest
+import com.ontop.app.ui.theme.Ink
+import com.ontop.app.ui.theme.WarmBackground
 import com.ontop.app.data.TagEntity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
@@ -146,6 +150,7 @@ internal fun CardDetailsDialog(
         saving = state.saving, error = state.error, automaticProgress = card.noteType == NoteType.CHECKLIST)
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun CardDetailsContent(
     card: CardEntity,
@@ -213,9 +218,12 @@ internal fun CardDetailsContent(
         }
     }
 
-    MaterialTheme(colorScheme = noteReadingColors()) {
+    MaterialTheme(colorScheme = noteReadingColors().copy(primary = Forest, onPrimary = Color.White,
+        background = WarmBackground, surface = WarmBackground, onBackground = Ink, onSurface = Ink)) {
     Surface(modifier.fillMaxSize().testTag("card-details"), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val compactActions = maxWidth < 400.dp
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onDismiss, enabled = !saving) {
                     Icon(painterResource(R.drawable.ic_back), contentDescription = "Закрыть карточку")
@@ -224,15 +232,15 @@ internal fun CardDetailsContent(
                     contentPadding = PaddingValues(horizontal = 4.dp), modifier = Modifier.weight(1f)) {
                     Text("Редактировать", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 }
-                if (onStatistics != null) IconButton(onClick = onStatistics) {
+                if (!compactActions && onStatistics != null) IconButton(onClick = onStatistics) {
                     Icon(painterResource(R.drawable.ic_statistics), contentDescription = "Статистика заметки")
                 }
-                if (onShare != null) IconButton(onClick = onShare, enabled = !saving && !sharing,
+                if (!compactActions && onShare != null) IconButton(onClick = onShare, enabled = !saving && !sharing,
                     modifier = Modifier.testTag("share-note")) {
                     Icon(painterResource(R.drawable.ic_share), contentDescription = "Поделиться",
                         tint = MaterialTheme.colorScheme.primary)
                 }
-                if (onReminder != null) IconButton(onClick = onReminder, enabled = !saving,
+                if (!compactActions && onReminder != null) IconButton(onClick = onReminder, enabled = !saving,
                     modifier = Modifier.testTag("reminder-settings")) {
                     Icon(painterResource(R.drawable.ic_bell), contentDescription = "Настроить напоминание",
                         tint = MaterialTheme.colorScheme.primary)
@@ -242,6 +250,10 @@ internal fun CardDetailsContent(
                         Icon(painterResource(R.drawable.ic_more), "Меню заметки")
                     }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        if (compactActions && onStatistics != null) DropdownMenuItem(text = { Text("Статистика") },
+                            onClick = { menu = false; onStatistics() })
+                        if (compactActions && onReminder != null) DropdownMenuItem(text = { Text("Напоминание") },
+                            enabled = !saving, onClick = { menu = false; onReminder() })
                         if (card.status != CardStatus.TRASHED) DropdownMenuItem(text = { Text("Редактировать") },
                             onClick = { menu = false; onEdit() })
                         if (onShare != null) DropdownMenuItem(text = { Text("Поделиться") }, enabled = !sharing,
@@ -258,21 +270,47 @@ internal fun CardDetailsContent(
                     }
                 }
             }
+            }
             LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("reflection-list"), state = list,
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp)) {
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)) {
                 item(key = "summary") {
                     Column {
-                        NoteStatusWithTopics(card, tags, "details-status-${card.id}",
-                            enabled = !saving && card.status != CardStatus.TRASHED, onClick = onPercentages,
-                            modifier = Modifier.padding(bottom = 12.dp))
-                        NoteReadingTitle(card.title, Modifier.testTag("details-title"))
+                        BoxWithConstraints(Modifier.fillMaxWidth()) {
+                            val compactTitle = maxWidth < 360.dp || card.title.length > 48
+                            val indicator: @Composable () -> Unit = {
+                                NoteStatusIndicator(card.importance, card.progress,
+                                    Modifier.testTag("details-status-${card.id}"), diameter = 76.dp,
+                                    enabled = !saving && card.status != CardStatus.TRASHED,
+                                    onClick = onPercentages, showBackground = false)
+                            }
+                            if (compactTitle) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(card.title, style = MaterialTheme.typography.headlineSmall,
+                                    modifier = Modifier.fillMaxWidth().testTag("details-title"))
+                                indicator()
+                            } else Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                indicator()
+                                Text(card.title, style = MaterialTheme.typography.headlineSmall,
+                                    modifier = Modifier.weight(1f).testTag("details-title"))
+                            }
+                        }
+                        if (tags.isNotEmpty()) androidx.compose.foundation.layout.FlowRow(
+                            Modifier.fillMaxWidth().padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            tags.forEach { tag -> Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .05f)) {
+                                Text(tag.name, style = MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                            } }
+                        }
                         if (card.noteType == NoteType.CHECKLIST) ChecklistCounter(card.checklistItems())
                         val document = RichTextCodec.decode(card.description, card.formatting)
                         if (document.media.isNotEmpty()) MultimediaNoteView(document)
                         else if (card.description.isNotBlank()) {
                             Text(RichTextCodec.decode(card.description, card.formatting).annotated(MaterialTheme.typography.bodyLarge.fontSize,
                                 MaterialTheme.colorScheme.background.luminance() < 0.5f), style = MaterialTheme.typography.bodyLarge,
-                                modifier = Modifier.padding(top = 24.dp, bottom = 8.dp).testTag("card-description"))
+                                modifier = Modifier.padding(top = 12.dp, bottom = 8.dp).testTag("card-description"))
                         }
                         if (onReminder != null) TextButton(onClick = onReminder, enabled = !saving,
                             modifier = Modifier.fillMaxWidth().testTag("reminder-status"),
@@ -287,7 +325,7 @@ internal fun CardDetailsContent(
                         onToggle = { onChecklistToggle?.invoke(item.id) })
                 }
                 item(key = "history-heading") {
-                    Column(Modifier.padding(top = 24.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.padding(top = 16.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("История размышлений · ${if (loaded && !loadError) comments.size else "—"}",
                             style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag("history-heading"))
                         when {
@@ -329,7 +367,8 @@ internal fun CardDetailsContent(
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.padding(horizontal = 16.dp).heightIn(max = 80.dp)
                             .verticalScroll(androidx.compose.foundation.rememberScrollState())) }
-                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.Bottom) {
                         OutlinedTextField(value = draft, onValueChange = { draft = it }, enabled = !saving,
                             placeholder = { Text("Напишите…") }, shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),

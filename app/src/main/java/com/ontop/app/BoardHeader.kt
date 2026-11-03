@@ -43,14 +43,11 @@ internal fun BoardHeaderContent(info: AppVersionInfo?, menuOpen: Boolean,
     sortMode: BoardSort = BoardSort.MANUAL, onSort: (BoardSort) -> Unit = {}, sortEnabled: Boolean = true,
     onCollection: (com.ontop.app.data.CardStatus) -> Unit = {}, onView: () -> Unit = {}) {
     var sortOpen by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text("OnTop", style = MaterialTheme.typography.headlineLarge,
                 color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
-            if (info?.isDebug == true) Text("DEV · ${info.shortId}",
-                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag("dev-build"))
         }
         IconButton(onClick = onView, enabled = sortEnabled, modifier = Modifier.testTag("board-view")) {
             Icon(painterResource(R.drawable.ic_review), contentDescription = "Просмотр заметок")

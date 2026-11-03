@@ -109,12 +109,15 @@ internal fun CardEditorScreen(
     var confirmDelete by rememberSaveable(editorKey) { mutableStateOf(false) }
     var displayOpen by rememberSaveable(editorKey) { mutableStateOf(false) }
     var otherOpen by rememberSaveable(editorKey) { mutableStateOf(false) }
+    var settingsSheetOpen by rememberSaveable(editorKey) { mutableStateOf(false) }
+    var pendingSettingsSection by remember { mutableStateOf<EditorSettingsSection?>(null) }
     var focusRequested by rememberSaveable(editorKey) { mutableStateOf(false) }
     val titleFocus = remember { FocusRequester() }
     val rootController = remember(editorKey) { NativeRichController() }
     var bodyController by remember(editorKey) { mutableStateOf(rootController) }
     var activePiece by rememberSaveable(editorKey) { mutableStateOf("body") }
     var pendingInsert by rememberSaveable(editorKey) { mutableStateOf(MediaInsertPoint("body", 0)) }
+    var menuInsertAnchor by remember(editorKey) { mutableStateOf<MediaInsertPoint?>(null) }
     var focusAfter by rememberSaveable(editorKey) { mutableStateOf<MediaInsertPoint?>(null) }
     var videoDialog by rememberSaveable(editorKey) { mutableStateOf(false) }
     var galleryOpen by rememberSaveable(editorKey) { mutableStateOf(false) }
@@ -163,7 +166,9 @@ internal fun CardEditorScreen(
             insertBlock(NoteMedia(offset = 0, kind = MediaKind.IMAGE, path = path))
         }
     }
-    fun captureInsertion() { pendingInsert = MediaInsertPoint(activePiece, minOf(bodyController.start, bodyController.end)) }
+    fun captureInsertion() {
+        pendingInsert = menuInsertAnchor ?: MediaInsertPoint(activePiece, minOf(bodyController.start, bodyController.end))
+    }
     val drawNew = {
         captureInsertion(); dismissKeyboard(); drawingBlockId = null; drawingSource = null
         drawingKey = java.util.UUID.randomUUID().toString()
@@ -205,7 +210,19 @@ internal fun CardEditorScreen(
         onCaptured = { name -> onCapturedMediaImport?.invoke(name, ::insertBlock) },
         onFailure = { android.widget.Toast.makeText(cameraContext, "Не удалось открыть видеокамеру.", android.widget.Toast.LENGTH_LONG).show() },
         video = true)
-    val imeOpen = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
+    LaunchedEffect(settingsSheetOpen, pendingSettingsSection) {
+        val section = pendingSettingsSection
+        if (!settingsSheetOpen && section != null) {
+            withFrameNanos { }
+            pendingSettingsSection = null
+            when (section) {
+                EditorSettingsSection.REMINDERS -> onReminders()
+                EditorSettingsSection.DISPLAY -> displayOpen = true
+                EditorSettingsSection.TOPICS -> topics.open = true
+                EditorSettingsSection.OTHER -> otherOpen = true
+            }
+        }
+    }
     fun saveDocument() {
         onSaveChecklist?.let { save ->
             save(title, description, size, RichTextCodec.encode(document), importance, progress,
@@ -224,24 +241,24 @@ internal fun CardEditorScreen(
     Surface(modifier.fillMaxSize().testTag("card-editor"), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = leave, enabled = !saving) {
+                IconButton(onClick = leave, enabled = !saving, modifier = Modifier.size(48.dp)) {
                     Icon(painterResource(R.drawable.ic_back), contentDescription = "Назад")
                 }
-                Text(if (card != null) "Редактирование" else if (noteType == NoteType.CHECKLIST) "Новый чек-лист" else "Новая заметка",
+                Text(if (noteType == NoteType.CHECKLIST || card != null) "Редактор" else "Новая заметка",
                     style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                IconButton(onClick = chooseImage, enabled = !saving) {
+                IconButton(onClick = chooseImage, enabled = !saving, modifier = Modifier.size(48.dp)) {
                     Icon(painterResource(R.drawable.ic_cover), contentDescription = "Выбрать обложку")
                 }
                 IconButton(onClick = { saveDocument() },
-                    enabled = !saving && remindersReady && title.isNotBlank(), modifier = Modifier.testTag("editor-save")) {
+                    enabled = !saving && remindersReady && title.isNotBlank(), modifier = Modifier.size(48.dp).testTag("editor-save")) {
                     if (saving) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                     else Icon(painterResource(R.drawable.ic_check), contentDescription = "Сохранить заметку")
                 }
             }
             Column(
                 Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { checklistViewport = it.boundsInRoot() }.verticalScroll(formScroll)
-                    .padding(horizontal = 24.dp, vertical = 20.dp).testTag("editor-fields"),
-                verticalArrangement = Arrangement.spacedBy(24.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp).testTag("editor-fields"),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 BasicTextField(
                     value = title, onValueChange = { title = it }, enabled = !saving,
@@ -283,18 +300,46 @@ internal fun CardEditorScreen(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 88.dp)
                         .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp))
             }
-            if (bodyFocused || document.media.isNotEmpty()) RichFormatToolbar(
-                document.pieces().firstOrNull { it.key == activePiece }?.let(document::fragment) ?: RichDocument(),
-                bodyController, enabled = !saving,
-                onAttachFile = if (onAttachFile != null) attachFile else null,
-                onInsertImage = if (onInlineImport != null) chooseInlineImage else null,
-                onInsertVideo = chooseVideo, onInsertAudio = chooseAudio, onInsertDrawing = drawNew)
-            else FlowRow(Modifier.fillMaxWidth()) {
-                if (onAttachFile != null) EditorMediaAction("Прикрепить файл", R.drawable.ic_attachment, !saving, attachFile)
-                if (onInlineImport != null) EditorMediaAction("Фото +", R.drawable.ic_cover, !saving, chooseInlineImage)
-                EditorMediaAction("Видео +", R.drawable.ic_video, !saving, chooseVideo)
-                EditorMediaAction("Аудио +", R.drawable.ic_audio, !saving, chooseAudio)
-                TextButton(onClick = drawNew, enabled = !saving) { Text("Нарисовать") }
+            if (noteType == NoteType.NOTE) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .24f))
+                if (bodyFocused || bodyController.start != bodyController.end) RichFormatToolbar(
+                    document.pieces().firstOrNull { it.key == activePiece }?.let(document::fragment) ?: RichDocument(),
+                    bodyController, enabled = !saving,
+                    onDone = { bodyController.select(bodyController.end, bodyController.end); dismissKeyboard() },
+                    onAttachFile = if (onAttachFile != null) attachFile else null,
+                    onInsertImage = if (onInlineImport != null) chooseInlineImage else null,
+                    onInsertVideo = chooseVideo, onInsertAudio = chooseAudio, onInsertDrawing = drawNew,
+                    onMediaOpen = {
+                        menuInsertAnchor = MediaInsertPoint(activePiece, minOf(bodyController.start, bodyController.end))
+                    }, onMediaDismiss = { menuInsertAnchor = null })
+                else EditorInsertToolbar(!saving, if (onAttachFile != null) attachFile else null,
+                    if (onInlineImport != null) chooseInlineImage else null,
+                    chooseVideo, chooseAudio, drawNew, onSettings = { dismissKeyboard(); settingsSheetOpen = true })
+            } else {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .24f))
+                if (bodyFocused) RichFormatToolbar(
+                    document.pieces().firstOrNull { it.key == activePiece }?.let(document::fragment) ?: RichDocument(),
+                    bodyController, enabled = !saving,
+                    onDone = { bodyController.select(bodyController.end, bodyController.end); dismissKeyboard() },
+                    onAttachFile = if (onAttachFile != null) attachFile else null,
+                    onInsertImage = if (onInlineImport != null) chooseInlineImage else null,
+                    onInsertVideo = chooseVideo, onInsertAudio = chooseAudio, onInsertDrawing = drawNew,
+                    onMediaOpen = {
+                        menuInsertAnchor = MediaInsertPoint(activePiece, minOf(bodyController.start, bodyController.end))
+                    }, onMediaDismiss = { menuInsertAnchor = null },
+                    onSettings = { dismissKeyboard(); settingsSheetOpen = true })
+                else Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).testTag("checklist-tools"),
+                    horizontalArrangement = Arrangement.SpaceEvenly) {
+                    EditorMediaMenu(!saving, if (onAttachFile != null) attachFile else null,
+                        if (onInlineImport != null) chooseInlineImage else null,
+                        chooseVideo, chooseAudio, drawNew,
+                        onOpen = { menuInsertAnchor = MediaInsertPoint(activePiece, minOf(bodyController.start, bodyController.end)) },
+                        onDismiss = { menuInsertAnchor = null })
+                    IconButton(onClick = { settingsSheetOpen = true }, enabled = !saving,
+                        modifier = Modifier.size(48.dp).testTag("editor-settings-compact")) {
+                        Icon(painterResource(R.drawable.ic_sliders), contentDescription = "Настройки заметки")
+                    }
+                }
             }
             pastedVideo?.let { proposal ->
                 FlowRow(Modifier.heightIn(max = 128.dp).verticalScroll(rememberScrollState())) {
@@ -312,20 +357,13 @@ internal fun CardEditorScreen(
                     TextButton(onClick = { pastedVideo = null }) { Text("Оставить ссылкой") }
                 }
             }
-            if (imeOpen) {
-                TextButton(onClick = dismissKeyboard, enabled = !saving,
-                    modifier = Modifier.fillMaxWidth().testTag("editor-settings-compact")) { Text("Настройки заметки") }
-            } else {
-                FlowRow(Modifier.fillMaxWidth().padding(horizontal = 8.dp).testTag("editor-settings"),
-                    horizontalArrangement = Arrangement.SpaceEvenly) {
-                    TextButton(onClick = { dismissKeyboard(); onReminders() }, enabled = !saving && remindersReady) { Text("Напоминания") }
-                    TextButton(onClick = { dismissKeyboard(); displayOpen = true }, enabled = !saving) { Text("Отображение") }
-                    TextButton(onClick = { dismissKeyboard(); topics.open = true }, enabled = !saving) { Text("Темы") }
-                    TextButton(onClick = { dismissKeyboard(); otherOpen = true }, enabled = !saving) { Text("Другие настройки") }
-                }
-            }
         }
     }
+    if (settingsSheetOpen) EditorNoteSettingsSheet(remindersReady,
+        onDismiss = { settingsSheetOpen = false }, onSelect = { section ->
+            pendingSettingsSection = section
+            settingsSheetOpen = false
+        })
     if (galleryOpen) com.ontop.app.gallery.GalleryPicker(onDismiss = { galleryOpen = false }, destination = galleryDestination,
         onSelect = { item ->
             galleryOpen = false
@@ -377,7 +415,8 @@ internal fun CardEditorScreen(
     if (displayOpen) EditorDisplayDialog(imagePath, size, saving, chooseImage, onRemoveImage,
         onSize = { dismissKeyboard(); size = it }, onClose = { displayOpen = false })
     if (otherOpen) EditorOtherDialog(card != null, importance, progress, saving,
-        onImportance = { percentages = percentages.copy(importance = it) }, onPercentages = { percentagesOpen = true },
+        onImportance = { percentages = percentages.copy(importance = it) },
+        onPercentages = { otherOpen = false; percentagesOpen = true },
         onDelete = { otherOpen = false; confirmDelete = true }, onClose = { otherOpen = false })
     if (topics.open) TagPickerDialog(availableTags, topics.ids, topics.names, !saving,
         onChange = { ids, names -> topics.ids = ids; topics.names = names }, onClose = { topics.open = false })

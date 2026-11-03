@@ -23,7 +23,7 @@ internal enum class StatusIndicatorSize { Compact, Expanded }
 @Composable
 internal fun NoteStatusIndicator(importance: Int, progress: Int?, modifier: Modifier = Modifier,
     variant: StatusIndicatorSize = StatusIndicatorSize.Expanded,
-    diameter: Dp = if (variant == StatusIndicatorSize.Compact) 48.dp else 112.dp,
+    diameter: Dp = if (variant == StatusIndicatorSize.Compact) 40.dp else 112.dp,
     enabled: Boolean = true, onClick: (() -> Unit)? = null, showBackground: Boolean = true) {
     val green = Color(0xFF39D353)
     val blue = Color(0xFF00C8FF)
@@ -31,13 +31,14 @@ internal fun NoteStatusIndicator(importance: Int, progress: Int?, modifier: Modi
     val inactive = if (showBackground) Color(0xFFB9BEB9).copy(alpha = .35f)
         else MaterialTheme.colorScheme.onSurface.copy(alpha = .12f)
     val values = "Важность: $importance%. Готовность: ${progress?.let { "$it%" } ?: "не отслеживается"}"
-    Box(modifier.size(diameter).clip(CircleShape).then(if (onClick != null) Modifier.clickable(enabled = enabled,
+    val touchDiameter = if (variant == StatusIndicatorSize.Compact && onClick != null) 48.dp else diameter
+    Box(modifier.size(touchDiameter).clip(CircleShape).then(if (onClick != null) Modifier.clickable(enabled = enabled,
         role = Role.Button, onClickLabel = "Изменить важность и готовность", onClick = onClick) else Modifier)
         .semantics(mergeDescendants = true) { contentDescription = values }, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) {
+        Canvas(Modifier.size(diameter)) {
             val side = size.minDimension - 4.dp.toPx()
-            val outer = side * .064f
-            val inner = side * if (variant == StatusIndicatorSize.Compact) .04f else .031f
+            val outer = if (variant == StatusIndicatorSize.Compact) 2.8.dp.toPx() else side * .064f
+            val inner = if (variant == StatusIndicatorSize.Compact) 1.8.dp.toPx() else side * .031f
             val center = Offset(size.width / 2, size.height / 2)
             if (showBackground) drawCircle(background, radius = size.minDimension / 2, center = center)
             val outerRadius = side / 2 - outer

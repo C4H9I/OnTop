@@ -37,10 +37,10 @@ class ReminderSettingsTest {
             compose.setContent { OnTopTheme { if (open) ReminderSettingsDialog(id, model) { open = false } } }
             compose.waitUntil(5_000) { compose.onAllNodes(isToggleable()).fetchSemanticsNodes().isNotEmpty() }
             val formatted = LocalTime.of(17, 45).format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
-            compose.onNodeWithText("Время: $formatted").assertIsDisplayed()
+            compose.onNodeWithText(formatted).assertIsDisplayed()
             compose.onNode(isToggleable()).assertIsOn().performClick().assertIsOff()
             assertTrue(db.reminderDao().forCard(id)!!.enabled)
-            compose.onNodeWithText("Сохранить").performClick()
+            compose.onNodeWithText("Применить").performClick()
             compose.waitUntil(5_000) { !open }
             val saved = db.reminderDao().forCard(id)!!
             assertFalse(saved.enabled)

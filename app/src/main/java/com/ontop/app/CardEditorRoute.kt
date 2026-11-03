@@ -14,6 +14,10 @@ import com.ontop.app.data.CardSize
 import com.ontop.app.data.NoteType
 import com.ontop.app.data.ChecklistItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.Color
+import com.ontop.app.ui.theme.Forest
+import com.ontop.app.ui.theme.Ink
+import com.ontop.app.ui.theme.WarmBackground
 import com.ontop.app.reminders.ReminderDraft
 import com.ontop.app.reminders.draft
 import kotlinx.coroutines.CancellationException
@@ -56,7 +60,8 @@ internal fun CardEditorRoute(card: CardEntity?, state: BoardState, viewModel: Bo
         pending?.let { save(it) }
         pending = null
     }
-    MaterialTheme(colorScheme = if ((card?.noteType ?: newNoteType) == NoteType.CHECKLIST) noteReadingColors() else MaterialTheme.colorScheme) {
+    MaterialTheme(colorScheme = MaterialTheme.colorScheme.copy(primary = Forest, onPrimary = Color.White,
+            background = WarmBackground, surface = WarmBackground, onBackground = Ink, onSurface = Ink)) {
     CardEditorScreen(card, state.saving || requestingPermission, state.error, state.draftImagePath,
         onImageSelected = viewModel::importImage, onRemoveImage = viewModel::removeDraftImage,
         onAttachFile = viewModel::importAttachments, onInlineImport = viewModel::importInlineImage,

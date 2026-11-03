@@ -48,7 +48,7 @@ class FlexibleReminderSettingsTest {
         failure?.let { throw it }
     }
     private fun click(text: String) { compose.onNodeWithText(text).performScrollTo().performClick() }
-    private fun timeLabel(hour: Int, minute: Int) = "Время: " + LocalTime.of(hour, minute)
+    private fun timeLabel(hour: Int, minute: Int) = LocalTime.of(hour, minute)
         .format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
     private fun capture(name: String) {
         InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")?.let { output ->
@@ -74,15 +74,17 @@ class FlexibleReminderSettingsTest {
                 }
             }
             compose.waitUntil(5_000) { compose.onAllNodes(isToggleable()).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Сохранить").assertIsDisplayed()
+            compose.onNodeWithText("Применить").assertIsDisplayed()
+            compose.onNodeWithTag("reminder-enable").performClick()
             click("По интервалу")
             ReminderSchedule.INTERVALS.forEach { hours -> compose.onNodeWithText("$hours ч").performScrollTo().assertIsDisplayed() }
             capture("flexible-reminder-large-font-intervals")
             weekdayLabels.forEach { day -> compose.onNodeWithText(day).performScrollTo().assertIsDisplayed() }
-            click("Добавить тихие часы")
-            compose.onNodeWithText("Тишина до 08:00").performScrollTo().assertIsDisplayed()
+            click("Тихие часы")
+            click("Включить тихие часы")
+            compose.onNodeWithText("До 08:00").performScrollTo().assertIsDisplayed()
             compose.onNodeWithText("Приостановить до…").performScrollTo().assertIsDisplayed()
-            compose.onNodeWithText("Сохранить").assertIsDisplayed().assertIsEnabled()
+            compose.onNodeWithText("Применить").assertIsDisplayed().assertIsEnabled()
             capture("flexible-reminder-large-font-pause")
         } finally {
             if (created) model.viewModelScope.cancel()
@@ -106,24 +108,26 @@ class FlexibleReminderSettingsTest {
             created = true
             compose.setContent { OnTopTheme { if (open) ReminderSettingsDialog(id, model) { open = false } } }
             compose.waitUntil(5_000) { compose.onAllNodes(isToggleable()).fetchSemanticsNodes().isNotEmpty() }
-            click("Добавить время"); chooseTime(9, 0)
+            compose.onNodeWithTag("reminder-enable").performClick()
+            click("+ Добавить время"); chooseTime(9, 0)
             compose.onAllNodesWithText(timeLabel(9, 0)).assertCountEquals(1)
-            click("Убрать")
-            compose.onNodeWithText("Сохранить").assertIsNotEnabled()
-            click("Добавить время"); chooseTime(9, 0)
-            click("Добавить время"); chooseTime(18, 0)
+            compose.onNodeWithContentDescription("Удалить время").performClick()
+            compose.onNodeWithText("Применить").assertIsNotEnabled()
+            click("+ Добавить время"); chooseTime(9, 0)
+            click("+ Добавить время"); chooseTime(18, 0)
             weekdayLabels.forEach(::click)
-            compose.onNodeWithText("Сохранить").assertIsNotEnabled()
+            compose.onNodeWithText("Применить").assertIsNotEnabled()
             click("Пн"); click("Ср"); click("Пт")
-            compose.onNodeWithText("Сохранить").assertIsEnabled()
+            compose.onNodeWithText("Применить").assertIsEnabled()
             assertEquals("", db.reminderDao().forCard(id)!!.times) // Still only a draft.
             click("По интервалу")
             click("6 ч")
-            click("Начало: 09:00"); chooseTime(21, 0)
-            click("Конец: 21:00"); chooseTime(7, 0)
-            click("Добавить тихие часы")
-            click("Тишина с 22:00"); chooseTime(23, 0)
-            click("Тишина до 08:00"); chooseTime(6, 0)
+            click("С 09:00"); chooseTime(21, 0)
+            click("До 21:00"); chooseTime(7, 0)
+            click("Тихие часы")
+            click("Включить тихие часы")
+            click("С 22:00"); chooseTime(23, 0)
+            click("До 08:00"); chooseTime(6, 0)
             click("Приостановить до…")
             var failure: Throwable? = null
             instrumentation.runOnMainSync {
@@ -135,7 +139,7 @@ class FlexibleReminderSettingsTest {
             }
             failure?.let { throw it }
             chooseTime(12, 0)
-            compose.onNodeWithText("Сохранить").performClick()
+            compose.onNodeWithText("Применить").performClick()
             compose.waitUntil(5_000) { !open }
             val saved = db.reminderDao().forCard(id)!!
             assertEquals("INTERVAL", saved.mode)
@@ -152,13 +156,14 @@ class FlexibleReminderSettingsTest {
             compose.onNodeWithText("По интервалу").assertIsSelected()
             capture("flexible-reminder-saved-interval")
             compose.onNodeWithText("6 ч").performScrollTo().assertIsSelected()
-            compose.onNodeWithText("Начало: 21:00").performScrollTo().assertIsDisplayed()
-            compose.onNodeWithText("Конец: 07:00").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("С 21:00").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("До 07:00").performScrollTo().assertIsDisplayed()
             compose.onNodeWithText("Пн").performScrollTo().assertIsSelected()
             compose.onNodeWithText("Вт").assertIsNotSelected()
-            compose.onNodeWithText("Тишина с 23:00").performScrollTo().assertIsDisplayed()
+            click("Тихие часы")
+            compose.onNodeWithText("С 23:00").performScrollTo().assertIsDisplayed()
             click("Возобновить")
-            compose.onNodeWithText("Сохранить").performClick()
+            compose.onNodeWithText("Применить").performClick()
             compose.waitUntil(5_000) { !open }
             assertNull(db.reminderDao().forCard(id)!!.pausedUntil)
             assertEquals(saved.schedule(), db.reminderDao().forCard(id)!!.schedule())

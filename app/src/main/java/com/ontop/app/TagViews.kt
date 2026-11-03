@@ -17,17 +17,21 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ontop.app.data.*
+import com.ontop.app.ui.theme.Forest
+import androidx.compose.ui.graphics.Color
 
 @Composable
 internal fun TopicFilter(state: BoardState, onSelect: (Long?) -> Unit, onManage: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         LazyRow(Modifier.weight(1f).testTag("topic-filter"), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             item { FilterChip(selected = state.selectedTagId == null, onClick = { onSelect(null) },
-                label = { Text("Все") }, modifier = Modifier.testTag("topic-all")) }
+                label = { Text("Все") }, modifier = Modifier.testTag("topic-all"),
+                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Forest, selectedLabelColor = Color.White)) }
             items(state.tags, key = { it.id }) { tag ->
                 FilterChip(selected = state.selectedTagId == tag.id, onClick = { onSelect(tag.id) },
                     label = { Text(tag.name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp)) },
-                    modifier = Modifier.testTag("topic-${tag.id}"))
+                    modifier = Modifier.testTag("topic-${tag.id}"),
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Forest, selectedLabelColor = Color.White))
             }
         }
         TextButton(onClick = onManage, enabled = !state.loading && !state.saving,

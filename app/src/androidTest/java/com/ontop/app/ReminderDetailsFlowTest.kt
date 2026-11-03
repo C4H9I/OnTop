@@ -60,7 +60,7 @@ class ReminderDetailsFlowTest {
                 throw AssertionError("Settings did not load:\n$roots", failure)
             }
         }
-        fun timeLabel(time: LocalTime) = "Время: " + time.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
+        fun timeLabel(time: LocalTime) = time.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
         fun denyNotificationPromptIfPresent() {
             fun find(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
                 if (node == null) return null
@@ -101,7 +101,7 @@ class ReminderDetailsFlowTest {
             waitForSettings()
             compose.onNode(isToggleable()).assertIsOn().performClick().assertIsOff()
             compose.onNodeWithText(timeLabel(LocalTime.of(17, 45))).assertIsDisplayed()
-            compose.onNodeWithText("Сохранить").performClick()
+            compose.onNodeWithText("Применить").performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(isToggleable()).fetchSemanticsNodes().isEmpty() }
             compose.onNodeWithTag("reflection-list").performScrollToIndex(0)
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Напоминание выключено").fetchSemanticsNodes().isNotEmpty() }
@@ -119,6 +119,7 @@ class ReminderDetailsFlowTest {
             compose.onNode(isToggleable()).assertIsOff()
             compose.onNodeWithText(timeLabel(LocalTime.of(9, 0))).assertIsDisplayed()
             assertNull(db.reminderDao().forCard(second))
+            compose.onNodeWithTag("reminder-enable").performClick()
             val chosen = LocalTime.now().plusHours(12).withSecond(0).withNano(0)
             compose.onNodeWithText(timeLabel(LocalTime.of(9, 0))).performClick()
             fun descendants(view: View): List<View> = listOf(view) +
@@ -137,7 +138,7 @@ class ReminderDetailsFlowTest {
             compose.onNodeWithText(timeLabel(chosen)).assertIsDisplayed()
             compose.onNode(isToggleable()).performClick().assertIsOn()
             assertNull(db.reminderDao().forCard(second))
-            compose.onNodeWithText("Сохранить").performClick()
+            compose.onNodeWithText("Применить").performClick()
             compose.waitUntil(10_000) {
                 denyNotificationPromptIfPresent()
                 runBlocking { db.reminderDao().forCard(second)?.enabled == true }
