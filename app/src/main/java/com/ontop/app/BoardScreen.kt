@@ -28,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -82,6 +83,7 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var tagsOpen by rememberSaveable { mutableStateOf(false) }
     var collection by rememberSaveable { mutableStateOf<com.ontop.app.data.CardStatus?>(null) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
     val percentNoteId = rememberSaveable { mutableStateOf<Long?>(null) }
     var sharedDraft by rememberSaveable { mutableStateOf<IncomingShare?>(null) }
     var sharedImagePath by rememberSaveable { mutableStateOf<String?>(null) }
@@ -102,8 +104,9 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
     }
     val gridState = rememberLazyStaggeredGridState()
     val selected = state.storedCards.firstOrNull { it.id == selectedId }
-    val filteredCards = remember(state.cards, state.cardTags, state.selectedTagId) {
-        filterCardsByTag(state.cards, state.cardTags, state.selectedTagId)
+    val filteredCards = remember(state.cards, state.cardTags, state.selectedTagId, searchQuery) {
+        if (searchQuery.isBlank()) filterCardsByTag(state.cards, state.cardTags, state.selectedTagId)
+        else searchBoardCards(state.cards, searchQuery)
     }
 
     // A widget launch waits for the user to save or discard the active draft.
@@ -160,7 +163,8 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
         })
         return
     }
-    if ((!editorOpen || !editing) && (!sliderOpen || editorOpen)) BoardContent(state, gridState = gridState, onAdd = {
+    if ((!editorOpen || !editing) && (!sliderOpen || editorOpen)) BoardContent(state, gridState = gridState,
+        searchQuery = searchQuery, onSearchQueryChange = { searchQuery = it }, onAdd = {
         newNoteType = NoteType.NOTE
         selectedId = null
         editing = true
@@ -227,17 +231,20 @@ private fun BoardScreenRoute(viewModel: BoardViewModel, lifecycle: Lifecycle, re
 @Composable
 internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEntity) -> Unit,
     gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(), onView: () -> Unit = {},
+    searchQuery: String = "", onSearchQueryChange: (String) -> Unit = {},
     onSettings: () -> Unit = {}, onSort: (BoardSort) -> Unit = {},
     onSelectTag: (Long?) -> Unit = {}, onManageTags: () -> Unit = {},
     onCollection: (com.ontop.app.data.CardStatus) -> Unit = {}, onPercentages: (CardEntity) -> Unit = {},
     onAddChecklist: () -> Unit = {}) {
-    val displayedCards = remember(state.cards, state.sortMode, state.cardTags, state.selectedTagId) {
-        sortedBoardCards(filterCardsByTag(state.cards, state.cardTags, state.selectedTagId), state.sortMode)
+    val displayedCards = remember(state.cards, state.sortMode, state.cardTags, state.selectedTagId, searchQuery) {
+        val matching = if (searchQuery.isBlank()) filterCardsByTag(state.cards, state.cardTags, state.selectedTagId)
+            else searchBoardCards(state.cards, searchQuery)
+        sortedBoardCards(matching, state.sortMode)
     }
     var previousSort by remember { mutableStateOf(state.sortMode) }
     var previousTag by remember { mutableStateOf(state.selectedTagId) }
-    LaunchedEffect(state.sortMode, state.selectedTagId) {
-        if (previousSort != state.sortMode || previousTag != state.selectedTagId) gridState.scrollToItem(0)
+    LaunchedEffect(state.sortMode, state.selectedTagId, searchQuery) {
+        if (previousSort != state.sortMode || previousTag != state.selectedTagId || searchQuery.isNotBlank()) gridState.scrollToItem(0)
         previousSort = state.sortMode
         previousTag = state.selectedTagId
     }
@@ -262,13 +269,26 @@ internal fun BoardContent(state: BoardState, onAdd: () -> Unit, onOpen: (CardEnt
     ) { innerPadding ->
         Column(Modifier.fillMaxSize().padding(innerPadding).consumeWindowInsets(innerPadding)) {
             BoardHeader(onSettings, state.sortMode, onSort, !state.loading, onCollection, onView)
-            TopicFilter(state, onSelectTag, onManageTags)
+            OutlinedTextField(value = searchQuery, onValueChange = onSearchQueryChange,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("board-search"),
+                label = { Text("Поиск по заметкам") },
+                placeholder = { Text("Название или содержимое") },
+                singleLine = true,
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) TextButton(onClick = { onSearchQueryChange("") }) { Text("Очистить") }
+                })
+            if (searchQuery.isBlank()) TopicFilter(state, onSelectTag, onManageTags)
             if (state.error != null) {
                 Text(state.error, color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(horizontal = 20.dp))
             }
             when {
                 state.loading -> Text("Загружаем карточки…", Modifier.padding(20.dp))
+                displayedCards.isEmpty() && searchQuery.isNotBlank() -> Column(Modifier.padding(20.dp)) {
+                    Text("Ничего не найдено", style = MaterialTheme.typography.titleLarge)
+                    Text("Попробуйте изменить запрос или очистить поиск.", modifier = Modifier.padding(top = 12.dp))
+                    TextButton(onClick = { onSearchQueryChange("") }) { Text("Очистить поиск") }
+                }
                 displayedCards.isEmpty() && state.selectedTagId != null -> Column(Modifier.padding(20.dp)) {
                     Text("В теме «${state.tags.firstOrNull { it.id == state.selectedTagId }?.name.orEmpty()}» пока нет заметок")
                     TextButton(onClick = { onSelectTag(null) }) { Text("Показать все заметки") }
