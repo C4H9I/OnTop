@@ -79,10 +79,11 @@ class NoteStatisticsTest {
                 }
             }
         } }
-        listOf("Закрыть карточку", "Статистика заметки", "Поделиться", "Настроить напоминание", "Меню заметки")
+        listOf("Закрыть карточку", "Меню заметки")
             .forEach { compose.onNodeWithContentDescription(it).assertIsDisplayed().assertHasClickAction() }
-        compose.onNodeWithText("Редактировать").assertIsDisplayed().assertHasClickAction()
-        compose.onNodeWithContentDescription("Статистика заметки").performClick()
+        compose.onNodeWithContentDescription("Редактировать").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithContentDescription("Меню заметки").performClick()
+        compose.onNodeWithText("Статистика").performClick()
         assertEquals(1, opened)
     }
 

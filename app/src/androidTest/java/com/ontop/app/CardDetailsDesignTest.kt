@@ -82,15 +82,22 @@ class CardDetailsDesignTest(private val width: Int, private val fontScale: Float
                 }, onDeleteComment = { id, done -> comments = comments.filterNot { it.id == id }; done() },
                 onDismiss = { closed = true }, onEdit = { edits++ })
         }
-        compose.onNodeWithText("Редактировать").performClick()
+        val indicatorBounds = compose.onNodeWithTag("details-status-1").fetchSemanticsNode().boundsInRoot
+        val titleBounds = compose.onNodeWithTag("details-title").fetchSemanticsNode().boundsInRoot
+        assertTrue(titleBounds.left >= indicatorBounds.right)
+        assertEquals(60f * InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density,
+            indicatorBounds.width, 2f)
+        assertFits("details-title")
+        compose.onNodeWithContentDescription("Редактировать").performClick()
         compose.runOnIdle { assertEquals(1, edits) }
         compose.onNodeWithContentDescription("Закрыть карточку").performClick()
         compose.runOnIdle { assertTrue(closed) }
         assertFits("card-description")
         screenshot("hero")
         compose.onNodeWithTag("reflection-list").performScrollToIndex(1)
-        compose.onNodeWithText("История размышлений · 0").assertIsDisplayed()
-        compose.onNodeWithText("Здесь сохранится история ваших размышлений. Добавьте первую запись в поле внизу.")
+        compose.onNodeWithText("История размышлений").assertIsDisplayed()
+        compose.onNodeWithTag("history-count").assertTextEquals("0")
+        compose.onNodeWithText("Пока нет записей. Добавьте первую ниже.")
             .assertExists()
         compose.onNodeWithTag("send-comment").assertIsNotEnabled()
         compose.onNodeWithTag("comment-input").performTextInput("Моя первая запись")
@@ -104,17 +111,20 @@ class CardDetailsDesignTest(private val width: Int, private val fontScale: Float
         val date = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
             .withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(1_700_000_000_000))
         compose.onNodeWithText(date).assertExists()
-        compose.onNodeWithTag("reflection-list").performScrollToNode(hasTestTag("delete-comment-7"))
+        compose.onNodeWithTag("reflection-list").performScrollToNode(hasTestTag("comment-menu-7"))
+        compose.onNodeWithTag("comment-menu-7").performClick()
         compose.onNodeWithTag("delete-comment-7").performClick()
         compose.onNodeWithText("Удалить комментарий?").assertIsDisplayed()
         compose.onNodeWithText("Отмена").performClick()
         compose.runOnIdle { assertEquals(1, comments.size) }
-        compose.onNodeWithTag("reflection-list").performScrollToNode(hasTestTag("delete-comment-7"))
+        compose.onNodeWithTag("reflection-list").performScrollToNode(hasTestTag("comment-menu-7"))
+        compose.onNodeWithTag("comment-menu-7").performClick()
         compose.onNodeWithTag("delete-comment-7").performClick()
         compose.onNodeWithText("Удалить", substring = false).performClick()
         compose.runOnIdle { assertTrue(comments.isEmpty()) }
         compose.onNodeWithTag("reflection-list").performScrollToIndex(1)
-        compose.onNodeWithText("История размышлений · 0").assertExists()
+        compose.onNodeWithText("История размышлений").assertExists()
+        compose.onNodeWithTag("history-count").assertTextEquals("0")
     }
 
     @Test fun photoAndLongCommentStayReadableAndFailedSendPreservesDraft() {

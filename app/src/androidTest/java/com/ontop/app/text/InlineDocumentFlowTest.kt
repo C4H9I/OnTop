@@ -164,7 +164,7 @@ class InlineDocumentFlowTest {
             compose.onNodeWithContentDescription("Закрыть карточку").performClick()
             compose.onNodeWithContentDescription("Просмотр заметок").performClick()
             assertViewOrder("note-slider", document)
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             val imageA = document.media[0].id
             compose.onNodeWithTag("after-media-$imageA").performScrollTo().performClick()
             typeInFocusedFragment("Дополнительный абзац\n")
@@ -176,7 +176,7 @@ class InlineDocumentFlowTest {
             assertEquals(imported, document.imagePaths())
             assertViewOrder("note-slider", document)
             // The explicit before/after controls must select the appropriate native field/cursor.
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             compose.onNodeWithTag("before-media-$imageA").performScrollTo().performClick()
             compose.runOnIdle {
                 val focused = editors().single { it.hasFocus() }

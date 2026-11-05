@@ -92,20 +92,23 @@ class ReminderDetailsFlowTest {
             }
             compose.waitUntil(5_000) { compose.onAllNodesWithTag("card-$first").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("card-$first").performClick()
-            compose.onNodeWithTag("reminder-settings").assertIsDisplayed()
+            compose.onNodeWithTag("reminder-status").assertIsDisplayed()
             compose.waitUntil(5_000) {
-                compose.onAllNodesWithText("История размышлений · 30").fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithText("История размышлений").fetchSemanticsNodes().isNotEmpty()
             }
             compose.onNodeWithTag("reflection-list").performScrollToIndex(25)
-            compose.onNodeWithTag("reminder-settings").assertIsDisplayed().performClick()
+            compose.onNodeWithContentDescription("Меню заметки").performClick()
+            compose.onNodeWithText("Напоминание").performClick()
             waitForSettings()
             compose.onNode(isToggleable()).assertIsOn().performClick().assertIsOff()
             compose.onNodeWithText(timeLabel(LocalTime.of(17, 45))).assertIsDisplayed()
             compose.onNodeWithText("Применить").performClick()
             compose.waitUntil(5_000) { compose.onAllNodes(isToggleable()).fetchSemanticsNodes().isEmpty() }
             compose.onNodeWithTag("reflection-list").performScrollToIndex(0)
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("Напоминание выключено").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithTag("reminder-status").assertIsDisplayed().performClick()
+            compose.onNodeWithText("Напоминание выключено").assertDoesNotExist()
+            compose.onNodeWithTag("reminder-status").assertDoesNotExist()
+            compose.onNodeWithContentDescription("Меню заметки").performClick()
+            compose.onNodeWithText("Напоминание").performClick()
             waitForSettings()
             compose.onNode(isToggleable()).assertIsOff()
             compose.onNodeWithText(timeLabel(LocalTime.of(17, 45))).assertIsDisplayed()
@@ -113,8 +116,9 @@ class ReminderDetailsFlowTest {
             compose.onNodeWithContentDescription("Закрыть карточку").performClick()
 
             compose.onNodeWithTag("card-$second").performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("Напоминание выключено").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithTag("reminder-status").performClick()
+            compose.onNodeWithText("Напоминание выключено").assertDoesNotExist()
+            compose.onNodeWithContentDescription("Меню заметки").performClick()
+            compose.onNodeWithText("Напоминание").performClick()
             waitForSettings()
             compose.onNode(isToggleable()).assertIsOff()
             compose.onNodeWithText(timeLabel(LocalTime.of(9, 0))).assertIsDisplayed()
@@ -161,7 +165,8 @@ class ReminderDetailsFlowTest {
             assertNotNull(saved.nextAt)
             compose.onNodeWithContentDescription("Закрыть карточку").performClick()
             compose.onNodeWithTag("card-$first").performClick()
-            compose.onNodeWithTag("reminder-settings").performClick()
+            compose.onNodeWithContentDescription("Меню заметки").performClick()
+            compose.onNodeWithText("Напоминание").performClick()
             waitForSettings()
             compose.onNode(isToggleable()).assertIsOff()
             compose.onNodeWithText(timeLabel(LocalTime.of(17, 45))).assertIsDisplayed()

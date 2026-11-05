@@ -45,7 +45,7 @@ class CardEditorFlowTest {
             }
             compose.onNodeWithText("Отображение").performClick()
         }
-        fun done() { compose.onNodeWithText("Готово").performClick() }
+        fun done() { compose.onNodeWithText("Применить").performClick() }
         check(keyboardSetting in listOf("0", "1", "null"))
         fun awaitHiddenIme() {
             if (android.os.Build.VERSION.SDK_INT >= 30) {
@@ -105,7 +105,7 @@ class CardEditorFlowTest {
             assertEquals("Подробности", original.description)
             assertEquals(CardSize.WIDE, original.size)
             compose.onNodeWithTag("card-${original.id}").performClick()
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             display()
             compose.onNodeWithTag("size-WIDE").performScrollTo().assertIsSelected()
             compose.onNodeWithTag("size-NORMAL").performClick()
@@ -116,7 +116,7 @@ class CardEditorFlowTest {
             compose.onNodeWithText("Не сохранять").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithTag("card-details").fetchSemanticsNodes().isNotEmpty() }
             assertEquals(original, db.cardDao().findById(original.id))
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             display()
             compose.onNodeWithTag("size-WIDE").performScrollTo().assertIsSelected()
             compose.onNodeWithTag("size-NORMAL").performClick()
@@ -131,7 +131,7 @@ class CardEditorFlowTest {
             assertEquals(original.createdAt, updated.createdAt)
             assertEquals(original.sortOrder, updated.sortOrder)
             compose.onNodeWithTag("card-${updated.id}").performClick()
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             compose.onNodeWithText("Другие настройки").performClick()
             compose.onNodeWithText("Удалить карточку").performScrollTo().performClick()
             compose.onNodeWithText("Удалить", substring = false).performClick()

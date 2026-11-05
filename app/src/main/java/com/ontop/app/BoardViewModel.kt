@@ -154,6 +154,43 @@ class BoardViewModel internal constructor(
         } finally { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { captures.delete(name) } }
     }
 
+    private val stagedCoverPaths = mutableSetOf<String>()
+
+    internal fun stageCover(uri: Uri, onImported: (String) -> Unit) {
+        var staged: String? = null
+        write({ staged?.let(onImported) }) {
+            val path = images.import(uri)
+            stagedCoverPaths.add(path)
+            staged = path
+        }
+    }
+
+    internal fun stageCameraCover(name: String, onImported: (String) -> Unit) {
+        var staged: String? = null
+        write({ staged?.let(onImported) }) {
+            val captures = com.ontop.app.gallery.CameraCaptureStore(getApplication())
+            try {
+                val path = images.import(captures.uri(name))
+                stagedCoverPaths.add(path)
+                staged = path
+            } finally { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { captures.delete(name) } }
+        }
+    }
+
+    internal fun stageEditedCover(path: String) { stagedCoverPaths.add(path) }
+
+    internal fun discardStagedCover(path: String?) {
+        if (path == null) return
+        write({}) { if (stagedCoverPaths.remove(path)) removeImage(path) }
+    }
+
+    internal fun applyDisplayCover(path: String?) = write({}) {
+        val previous = mutableState.value.draftImagePath
+        mutableState.update { it.copy(draftImagePath = path) }
+        if (path != null) stagedCoverPaths.remove(path)
+        if (previous != path && previous != originalImagePath) removeImage(previous)
+    }
+
     internal fun importCapturedMedia(name: String, onImported: (com.ontop.app.text.NoteMedia) -> Unit) = write({},
         "Не удалось сохранить запись. Проверьте свободное место и размер файла (до 256 МиБ).") {
         val captures = com.ontop.app.gallery.CameraCaptureStore(getApplication())
@@ -188,6 +225,8 @@ class BoardViewModel internal constructor(
     fun cancelImageEdit(onSuccess: () -> Unit) = write(onSuccess) {
         val draft = mutableState.value.draftImagePath
         if (draft != originalImagePath) removeImage(draft)
+        stagedCoverPaths.toList().forEach { removeImage(it) }
+        stagedCoverPaths.clear()
         inlineDraftPaths.toList().forEach { removeImage(it) }
         inlineDraftPaths.clear()
         imageEditorActive = false
@@ -285,8 +324,9 @@ class BoardViewModel internal constructor(
     init {
         viewModelScope.launch {
             backup.revision.drop(1).collect {
-                val obsolete = inlineDraftPaths.toSet() + listOfNotNull(mutableState.value.draftImagePath)
+                val obsolete = inlineDraftPaths.toSet() + stagedCoverPaths.toSet() + listOfNotNull(mutableState.value.draftImagePath)
                 inlineDraftPaths.clear()
+                stagedCoverPaths.clear()
                 imageEditorActive = false
                 originalImagePath = null
                 sliderSession.currentId = null; sliderSession.index = 0
@@ -358,6 +398,8 @@ class BoardViewModel internal constructor(
             refreshWidgets(card?.id ?: 0L)
             if (card?.imagePath != imagePath) removeImage(card?.imagePath)
             imageEditorActive = false
+            stagedCoverPaths.toList().forEach { removeImage(it) }
+            stagedCoverPaths.clear()
         }
     }
 
@@ -406,6 +448,8 @@ class BoardViewModel internal constructor(
         inlineDraftPaths.clear()
         val draft = mutableState.value.draftImagePath
         if (imageEditorActive && draft != card.imagePath) removeImage(draft)
+        stagedCoverPaths.toList().forEach { removeImage(it) }
+        stagedCoverPaths.clear()
         imageEditorActive = false
     }
 

@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.ViewModel
@@ -27,6 +28,29 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.ontop.app.ui.theme.Forest
+import com.ontop.app.ui.theme.Ink
+import com.ontop.app.ui.theme.Sand
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.res.painterResource
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DrawingToolButton(
+    icon: Int, label: String, selected: Boolean = false, enabled: Boolean = true,
+    modifier: Modifier = Modifier, onClick: () -> Unit
+) {
+    TooltipBox(positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(label) } }, state = rememberTooltipState()) {
+    IconButton(onClick = onClick, enabled = enabled,
+        modifier = modifier.size(48.dp)
+            .background(if (selected) Sand.copy(alpha = .55f) else Color.Transparent, RoundedCornerShape(12.dp))
+            .semantics { stateDescription = if (selected) "Выбран" else "Не выбран" }) {
+        Icon(painterResource(icon), contentDescription = label, tint = if (selected) Forest else Ink)
+    }
+    }
+}
 
 internal class DrawingSession : ViewModel() {
     var session: String? = null
@@ -40,6 +64,8 @@ internal class DrawingSession : ViewModel() {
     var error by mutableStateOf<String?>(null); private set
     var result by mutableStateOf<String?>(null)
     private var ink by mutableStateOf(false)
+    private var sourceContext: Context? = null
+    private var backgroundRevision = 0
     val changed get() = ready && document != original
     val canUndo get() = undo.isNotEmpty()
     val canClear get() = ink
@@ -53,12 +79,15 @@ internal class DrawingSession : ViewModel() {
     val canRedo get() = redo.isNotEmpty()
     fun open(context: Context, key: String, source: String?) {
         if (session == key) return
+        backgroundRevision++
+        sourceContext = context.applicationContext
         session = key; ready = false; error = null; result = null; redo = emptyList(); undo = emptyList(); ink = false
         viewModelScope.launch {
             try {
                 val loaded = if (source == null) DrawingDocument() else DrawingStore.open(context, source)
                 val background = DrawingStore.background(context, loaded, 1400)
-                if (session == key) { document = loaded; backgroundImage = background; original = loaded; ready = true; updateInk() }
+                if (session == key) { val old = backgroundImage; document = loaded; backgroundImage = background
+                    if (old !== background) old?.recycle(); original = loaded; ready = true; updateInk() }
                 else background?.recycle()
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Exception) { if (session == key) error = "Не удалось открыть рисунок. Исходное изображение сохранено." }
@@ -74,6 +103,49 @@ internal class DrawingSession : ViewModel() {
         if (next == document) return
         undo = (undo + document).takeLast(200); document = next; redo = emptyList(); updateInk()
     }
+    fun crop(context: Context, frame: CropFrame, onApplied: () -> Unit) {
+        if (busy || !ready) return
+        busy = true; error = null
+        val before = document
+        viewModelScope.launch {
+            try {
+                val next = withContext(Dispatchers.Default) {
+                    DrawingCrop.apply(before, frame).also { DrawingCodec.decode(DrawingCodec.encode(it)) }
+                }
+                val preview = DrawingStore.background(context, next, 1400)
+                if (document == before) {
+                    backgroundRevision++
+                    val old = backgroundImage
+                    commit(next); backgroundImage = preview
+                    if (old !== preview) old?.recycle()
+                    onApplied()
+                } else preview?.recycle()
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) { error = "Не удалось обрезать изображение. Попробуйте выбрать другую область." }
+            catch (_: OutOfMemoryError) { error = "Недостаточно памяти для обрезки изображения." }
+            finally { busy = false }
+        }
+    }
+    private fun restoreBackground() {
+        val context = sourceContext ?: return
+        val revision = ++backgroundRevision
+        val current = document
+        val old = backgroundImage
+        backgroundImage = null
+        busy = true
+        viewModelScope.launch {
+            try {
+                val preview = DrawingStore.background(context, current, 1400)
+                if (revision == backgroundRevision) {
+                    backgroundImage = preview
+                    if (old !== preview) old?.recycle()
+                } else preview?.recycle()
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) { if (revision == backgroundRevision) backgroundImage = old
+                error = "Не удалось открыть обрезанное изображение." }
+            finally { if (revision == backgroundRevision) busy = false }
+        }
+    }
     fun text(value: DrawingText) {
         if (document.texts.size >= 1000 && document.texts.none { it.id == value.id }) return
         val positioned = DrawingRenderer.position(value, document)
@@ -86,8 +158,10 @@ internal class DrawingSession : ViewModel() {
     }
     fun deleteShape(id: String) = commit(document.copy(shapes = document.shapes.filterNot { it.id == id }))
     fun clear() = commit(document.copy(operations = emptyList(), texts = emptyList(), shapes = emptyList()))
-    fun undo() { undo.lastOrNull()?.let { redo = redo + document; document = it; undo = undo.dropLast(1); updateInk() } }
-    fun redo() { redo.lastOrNull()?.let { undo = undo + document; document = it; redo = redo.dropLast(1); updateInk() } }
+    fun undo() { undo.lastOrNull()?.let { redo = redo + document; val changedCrop = document.sourceCrop != it.sourceCrop
+        document = it; undo = undo.dropLast(1); updateInk(); if (changedCrop) restoreBackground() } }
+    fun redo() { redo.lastOrNull()?.let { undo = undo + document; val changedCrop = document.sourceCrop != it.sourceCrop
+        document = it; redo = redo.dropLast(1); updateInk(); if (changedCrop) restoreBackground() } }
     fun save(context: Context) {
         if (busy || !ready) return
         busy = true; error = null
@@ -95,6 +169,7 @@ internal class DrawingSession : ViewModel() {
             try { result = BackupManager.dataAccess { DrawingStore.save(context, document) }
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Exception) { error = "Не удалось сохранить рисунок. Повторите попытку."
+            } catch (_: OutOfMemoryError) { error = "Недостаточно памяти для сохранения изображения."
             } finally { busy = false }
         }
     }
@@ -115,6 +190,8 @@ internal fun DrawingEditor(key: String, source: String?, onDismiss: () -> Unit, 
     var shapeTool by remember { mutableStateOf<ShapeType?>(null) }
     var shapeMenu by remember { mutableStateOf(false) }
     var selectedShapeId by remember { mutableStateOf<String?>(null) }
+    var cropFrame by remember(key) { mutableStateOf<CropFrame?>(null) }
+    var cropPreset by remember(key) { mutableStateOf("Свободно") }
     val selectedShape = session.document.shapes.firstOrNull { it.id == selectedShapeId }
     var editingText by remember { mutableStateOf<DrawingText?>(null) }
     val selected = session.document.texts.firstOrNull { it.id == selectedId }
@@ -128,52 +205,134 @@ internal fun DrawingEditor(key: String, source: String?, onDismiss: () -> Unit, 
     }
     var discard by remember { mutableStateOf(false) }
     var clear by remember { mutableStateOf(false) }
-    fun leave() { if (!session.busy) { if (session.changed) discard = true else onDismiss() } }
+    fun leave() { if (!session.busy) {
+        if (cropFrame != null) cropFrame = null
+        else if (session.changed) discard = true else onDismiss()
+    } }
     Dialog(onDismissRequest = { leave() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         BackHandler { leave() }
         MaterialTheme(colorScheme = com.ontop.app.noteReadingColors()) {
             Surface(Modifier.fillMaxSize().testTag("drawing-editor"), color = Color.White) {
                 Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val narrowHeader = maxWidth < 320.dp
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { leave() }, enabled = !session.busy) { Text("Назад") }
-                        Text("Рисунок", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                        IconButton(onClick = viewport::fit, enabled = session.ready && !session.busy,
-                            modifier = Modifier.testTag("drawing-fit")) {
-                            Icon(androidx.compose.ui.res.painterResource(com.ontop.app.R.drawable.ic_fit_screen), "Вписать в экран")
+                        IconButton(onClick = { leave() }, enabled = !session.busy,
+                            modifier = Modifier.size(48.dp).testTag("drawing-back")) {
+                            Icon(painterResource(com.ontop.app.R.drawable.ic_back), "Назад", tint = Forest)
                         }
-                        TextButton(onClick = session::undo, enabled = session.ready && !session.busy && session.canUndo,
-                            modifier = Modifier.width(48.dp).testTag("drawing-undo").semantics { contentDescription = "Отменить действие" }) { Text("↶") }
-                        TextButton(onClick = session::redo, enabled = session.ready && !session.busy && session.canRedo,
-                            modifier = Modifier.width(48.dp).testTag("drawing-redo").semantics { contentDescription = "Повторить действие" }) { Text("↷") }
-                        TextButton(onClick = { session.save(context) }, enabled = session.ready && !session.busy) { Text("Готово") }
+                        Text("Рисунок", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                        if (!narrowHeader) IconButton(onClick = viewport::fit, enabled = session.ready && !session.busy,
+                            modifier = Modifier.size(48.dp).testTag("drawing-fit")) {
+                            Icon(painterResource(com.ontop.app.R.drawable.ic_fit_screen), "Вписать в экран", tint = Forest)
+                        }
+                        IconButton(onClick = session::undo, enabled = session.ready && !session.busy && session.canUndo,
+                            modifier = Modifier.size(48.dp).testTag("drawing-undo")) {
+                            Icon(painterResource(com.ontop.app.R.drawable.ic_undo), "Отменить действие", tint = Forest)
+                        }
+                        IconButton(onClick = session::redo, enabled = session.ready && !session.busy && session.canRedo,
+                            modifier = Modifier.size(48.dp).testTag("drawing-redo")) {
+                            Icon(painterResource(com.ontop.app.R.drawable.ic_redo), "Повторить действие", tint = Forest)
+                        }
+                        IconButton(onClick = { session.save(context) }, enabled = session.ready && !session.busy && cropFrame == null,
+                            modifier = Modifier.size(48.dp).testTag("drawing-save")) {
+                            Icon(painterResource(com.ontop.app.R.drawable.ic_check), "Готово", tint = Forest)
+                        }
+                    }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                         if (session.ready) DrawingCanvas(session, viewport, eraser, textTool, color, width, selectedId,
                             onSelect = { selectedId = it }, onEdit = { editingText = it }, modifier = Modifier.fillMaxSize(), shapeTool = shapeTool, selectedShapeId = selectedShapeId,
                             onSelectShape = { selectedShapeId = it; session.document.shapes.firstOrNull { s -> s.id == it }?.let { s -> width = s.width; color = s.color } })
                         else if (session.error == null) CircularProgressIndicator()
+                        cropFrame?.let { frame ->
+                            val ratio = when (cropPreset) {
+                                "1:1" -> 1f; "4:3" -> 4f / 3f; "16:9" -> 16f / 9f
+                                "Исходные" -> session.document.width.toFloat() / session.document.height
+                                else -> null
+                            }
+                            DrawingCropOverlay(frame, viewport, ratio, onChange = { cropFrame = it })
+                        }
                     }
                     session.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(8.dp)) }
                     if (session.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (cropFrame != null) {
+                        Text("Соотношение сторон", Modifier.padding(horizontal = 12.dp),
+                            style = MaterialTheme.typography.labelMedium)
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("Свободно", "1:1", "4:3", "16:9", "Исходные").forEach { preset ->
+                                FilterChip(selected = cropPreset == preset, onClick = {
+                                    cropPreset = preset
+                                    val ratio = when (preset) {
+                                        "1:1" -> 1f; "4:3" -> 4f / 3f; "16:9" -> 16f / 9f
+                                        "Исходные" -> session.document.width.toFloat() / session.document.height
+                                        else -> null
+                                    }
+                                    if (ratio != null) cropFrame = cropFrame?.aspect(ratio)
+                                }, label = { Text(preset) }, enabled = !session.busy,
+                                    modifier = Modifier.heightIn(min = 48.dp).testTag("crop-preset-$preset"))
+                            }
+                        }
+                        Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                            TextButton(onClick = { cropFrame = null }, enabled = !session.busy,
+                                modifier = Modifier.heightIn(min = 48.dp)) { Text("Отмена") }
+                            Button(onClick = { cropFrame?.let { session.crop(context, it) { cropFrame = null } } },
+                                enabled = !session.busy, modifier = Modifier.heightIn(min = 48.dp).testTag("crop-apply")) {
+                                Text("Применить")
+                            }
+                        }
+                    } else {
                     Text("${(viewport.value.zoom * 100).toInt()}%",
                         Modifier.padding(horizontal = 12.dp).testTag("drawing-zoom"), style = MaterialTheme.typography.labelSmall)
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                        FilterChip(!eraser && !textTool && shapeTool == null, { eraser = false; textTool = false; selectedId = null; shapeTool = null; selectedShapeId = null }, { Text("Карандаш") }, enabled = !session.busy)
-                        FilterChip(eraser && !textTool, { eraser = true; textTool = false; selectedId = null; shapeTool = null; selectedShapeId = null }, { Text("Ластик") }, enabled = !session.busy)
-                        FilterChip(textTool, { textTool = true; eraser = false; shapeTool = null; selectedShapeId = null }, { Text("Текст") }, enabled = !session.busy,
-                            leadingIcon = { Icon(androidx.compose.ui.res.painterResource(com.ontop.app.R.drawable.ic_text_fields), null, Modifier.size(18.dp)) },
-                            modifier = Modifier.testTag("drawing-text-tool"))
+                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val scrollTools = maxWidth < 344.dp
+                    val moveFitToTools = maxWidth < 320.dp
+                    Row((if (scrollTools) Modifier.horizontalScroll(rememberScrollState()) else Modifier.fillMaxWidth())
+                        .padding(horizontal = 8.dp),
+                        horizontalArrangement = if (scrollTools) Arrangement.spacedBy(8.dp) else Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        DrawingToolButton(com.ontop.app.R.drawable.ic_draw, "Карандаш",
+                            selected = !eraser && !textTool && shapeTool == null, enabled = !session.busy,
+                            modifier = Modifier.testTag("drawing-pencil-tool")) {
+                            eraser = false; textTool = false; selectedId = null; shapeTool = null; selectedShapeId = null
+                        }
+                        DrawingToolButton(com.ontop.app.R.drawable.ic_eraser, "Ластик",
+                            selected = eraser && !textTool, enabled = !session.busy,
+                            modifier = Modifier.testTag("drawing-eraser-tool")) {
+                            eraser = true; textTool = false; selectedId = null; shapeTool = null; selectedShapeId = null
+                        }
+                        DrawingToolButton(com.ontop.app.R.drawable.ic_text_fields, "Текст",
+                            selected = textTool, enabled = !session.busy,
+                            modifier = Modifier.testTag("drawing-text-tool")) {
+                            textTool = true; eraser = false; shapeTool = null; selectedShapeId = null
+                        }
                         Box {
-                            FilterChip(shapeTool != null, { shapeMenu = true }, { Text(shapeTool?.label ?: "Фигуры") }, enabled = !session.busy)
+                            DrawingToolButton(com.ontop.app.R.drawable.ic_shapes, "Фигуры",
+                                selected = shapeTool != null, enabled = !session.busy,
+                                modifier = Modifier.testTag("drawing-shape-tool")) { shapeMenu = true }
                             DropdownMenu(shapeMenu, { shapeMenu = false }) {
                                 ShapeType.entries.forEach { type -> DropdownMenuItem(text = { Text(type.label) }, onClick = {
                                     shapeTool = type; textTool = false; eraser = false; selectedId = null; selectedShapeId = null; shapeMenu = false
                                 }) }
                             }
                         }
-                        TextButton(onClick = { clear = true }, enabled = session.ready && !session.busy && session.canClear) { Text("Очистить") }
+                        DrawingToolButton(com.ontop.app.R.drawable.ic_crop, "Обрезать",
+                            enabled = session.ready && !session.busy,
+                            modifier = Modifier.testTag("drawing-crop-tool")) {
+                            cropPreset = "Свободно"; cropFrame = DrawingCrop.initial(session.document)
+                            selectedId = null; selectedShapeId = null
+                        }
+                        DrawingToolButton(com.ontop.app.R.drawable.ic_delete, "Очистить",
+                            enabled = session.ready && !session.busy && session.canClear,
+                            modifier = Modifier.testTag("drawing-clear-tool")) { clear = true }
+                        if (moveFitToTools) DrawingToolButton(com.ontop.app.R.drawable.ic_fit_screen,
+                            "Вписать в экран", enabled = session.ready && !session.busy,
+                            modifier = Modifier.testTag("drawing-fit"), onClick = viewport::fit)
                     }
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    }
+                    if (!eraser) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.SpaceEvenly) {
                         listOf("Чёрный" to 0xFF000000.toInt(), "Зелёный" to 0xFF234E35.toInt(), "Красный" to 0xFFD32F2F.toInt(),
                             "Синий" to 0xFF1565C0.toInt(), "Жёлтый" to 0xFFFFC107.toInt(), "Белый" to 0xFFFFFFFF.toInt()).forEach { (name, value) ->
                             OutlinedButton(onClick = { color = value; if (shapeTool != null) selectedShape?.let { session.shape(it.copy(color = value)) }; if (textTool) selected?.let { session.text(it.copy(color = value)) } else eraser = false }, enabled = !session.busy,
@@ -192,6 +351,7 @@ internal fun DrawingEditor(key: String, source: String?, onDismiss: () -> Unit, 
                         Text("Толщина ${width.toInt()}")
                         Slider(width, { width = it },
                             onValueChangeFinished = { if (shapeTool != null) selectedShape?.let { session.shape(it.copy(width = width)) } }, valueRange = 1f..24f, enabled = !session.busy, modifier = Modifier.weight(1f).testTag("drawing-width"))
+                    }
                     }
                 }
             }

@@ -53,7 +53,7 @@ class DrawingTextEditorTest {
             compose.onNodeWithTag("drawing-undo").performClick()
             compose.onNodeWithTag("drawing-redo").performClick()
             compose.onNodeWithTag("drawing-undo").performClick()
-            compose.onNodeWithText("Готово").performClick()
+            compose.onNodeWithTag("drawing-save").performClick()
             compose.waitUntil(10000) { saved != null }
             val path = saved!!
             val document = DrawingStore.load(context, path)
@@ -73,7 +73,7 @@ class DrawingTextEditorTest {
             compose.onNodeWithText("Изменить").performClick()
             compose.onNodeWithTag("drawing-text-input").performTextReplacement("Отменить")
             compose.onNodeWithText("Добавить / сохранить").performClick()
-            compose.onNodeWithText("Назад").performClick()
+            compose.onNodeWithTag("drawing-back").performClick()
             compose.onNodeWithText("Не сохранять").performClick()
             assertEquals(document, DrawingStore.load(context, path))
             assertArrayEquals(bytes, CardImageStore(context).resolve(path).readBytes())

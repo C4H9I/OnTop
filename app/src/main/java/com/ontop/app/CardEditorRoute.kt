@@ -64,6 +64,10 @@ internal fun CardEditorRoute(card: CardEntity?, state: BoardState, viewModel: Bo
             background = WarmBackground, surface = WarmBackground, onBackground = Ink, onSurface = Ink)) {
     CardEditorScreen(card, state.saving || requestingPermission, state.error, state.draftImagePath,
         onImageSelected = viewModel::importImage, onRemoveImage = viewModel::removeDraftImage,
+        onStageCover = viewModel::stageCover, onStageCameraCover = viewModel::stageCameraCover,
+        onStageEditedCover = viewModel::stageEditedCover,
+        onDiscardStagedCover = viewModel::discardStagedCover,
+        onApplyDisplayCover = viewModel::applyDisplayCover,
         onAttachFile = viewModel::importAttachments, onInlineImport = viewModel::importInlineImage,
         onCameraImport = viewModel::importCameraPhoto, onCameraCoverImport = viewModel::importCameraCover,
         onCapturedMediaImport = viewModel::importCapturedMedia, onInlineDraftPaths = viewModel::trackInlineDraft,

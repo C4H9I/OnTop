@@ -69,7 +69,12 @@ internal fun CardEditorScreen(
     onSaveTagged: ((String, String, CardSize, String?, Int, Int?, List<Long>, List<String>) -> Unit)? = null,
     initialSharedTitle: String? = null, initialSharedText: String? = null, sharedInlinePath: String? = null,
     newNoteType: NoteType = NoteType.NOTE,
-    onSaveChecklist: ((String, String, CardSize, String?, Int, Int?, List<Long>, List<String>, NoteType, List<ChecklistItem>) -> Unit)? = null
+    onSaveChecklist: ((String, String, CardSize, String?, Int, Int?, List<Long>, List<String>, NoteType, List<ChecklistItem>) -> Unit)? = null,
+    onStageCover: (Uri, (String) -> Unit) -> Unit = { _, _ -> },
+    onStageCameraCover: (String, (String) -> Unit) -> Unit = { _, _ -> },
+    onStageEditedCover: (String) -> Unit = {},
+    onDiscardStagedCover: (String?) -> Unit = {},
+    onApplyDisplayCover: (String?) -> Unit = {}
 ) {
     val editorKey = card?.id
     // Capture the initial values once: a Room emission must not reset an active draft.
@@ -103,11 +108,15 @@ internal fun CardEditorScreen(
     var percentages by rememberSaveable(editorKey) { mutableStateOf(initialPercentages) }
     val importance = percentages.importance
     val progress = if (noteType == NoteType.CHECKLIST) Checklist.progress(checklist) else percentages.progress
-    var percentagesOpen by rememberSaveable(editorKey) { mutableStateOf(false) }
     val topics = rememberEditorTopics(editorKey, initialTagIds)
     var confirmDiscard by rememberSaveable(editorKey) { mutableStateOf(false) }
     var confirmDelete by rememberSaveable(editorKey) { mutableStateOf(false) }
     var displayOpen by rememberSaveable(editorKey) { mutableStateOf(false) }
+    var displayImage by rememberSaveable(editorKey) { mutableStateOf<String?>(null) }
+    var displaySize by rememberSaveable(editorKey) { mutableStateOf(CardSize.NORMAL) }
+    var stagedCover by rememberSaveable(editorKey) { mutableStateOf<String?>(null) }
+    var coverSelectionFromDisplay by rememberSaveable(editorKey) { mutableStateOf(false) }
+    var editingCover by remember { mutableStateOf(false) }
     var otherOpen by rememberSaveable(editorKey) { mutableStateOf(false) }
     var settingsSheetOpen by rememberSaveable(editorKey) { mutableStateOf(false) }
     var pendingSettingsSection by remember { mutableStateOf<EditorSettingsSection?>(null) }
@@ -149,11 +158,20 @@ internal fun CardEditorScreen(
             focusRequested = true
         }
     }
+    fun selectedCover(uri: Uri) {
+        if (coverSelectionFromDisplay) onStageCover(uri) { path ->
+            if (displayOpen) {
+                onDiscardStagedCover(stagedCover)
+                stagedCover = path; displayImage = path
+            } else onDiscardStagedCover(path)
+        } else onImageSelected(uri)
+    }
     val picker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
-        if (uri != null) onImageSelected(uri)
+        if (uri != null) selectedCover(uri)
     }
     val chooseImage = {
-        dismissKeyboard(); displayOpen = false
+        dismissKeyboard()
+        coverSelectionFromDisplay = displayOpen
         galleryDestination = MediaDestination.COVER; galleryOpen = true
     }
     LaunchedEffect(document.resourcePaths()) { onInlineDraftPaths(document.resourcePaths()) }
@@ -170,7 +188,7 @@ internal fun CardEditorScreen(
         pendingInsert = menuInsertAnchor ?: MediaInsertPoint(activePiece, minOf(bodyController.start, bodyController.end))
     }
     val drawNew = {
-        captureInsertion(); dismissKeyboard(); drawingBlockId = null; drawingSource = null
+        captureInsertion(); dismissKeyboard(); editingCover = false; drawingBlockId = null; drawingSource = null
         drawingKey = java.util.UUID.randomUUID().toString()
     }
     val chooseInlineImage = {
@@ -196,12 +214,19 @@ internal fun CardEditorScreen(
         if (uri != null) onAttachFile?.invoke(listOf(uri)) { blocks -> blocks.forEach(::insertBlock) }
     }
     val coverDocument = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) onImageSelected(uri)
+        if (uri != null) selectedCover(uri)
     }
     val cameraContext = androidx.compose.ui.platform.LocalContext.current
     val takePhoto = com.ontop.app.gallery.rememberCameraCapture(editorKey,
         onCaptured = { name ->
-            if (cameraDestination == MediaDestination.COVER) onCameraCoverImport?.invoke(name)
+            if (cameraDestination == MediaDestination.COVER) {
+                if (coverSelectionFromDisplay) onStageCameraCover(name) { path ->
+                    if (displayOpen) {
+                        onDiscardStagedCover(stagedCover)
+                        stagedCover = path; displayImage = path
+                    } else onDiscardStagedCover(path)
+                } else onCameraCoverImport?.invoke(name)
+            }
             else onCameraImport?.invoke(name) { path -> insertBlock(NoteMedia(offset = 0, kind = MediaKind.IMAGE, path = path)) }
         }, onFailure = {
             android.widget.Toast.makeText(cameraContext, "Не удалось открыть камеру. Проверьте наличие приложения камеры.", android.widget.Toast.LENGTH_LONG).show()
@@ -217,7 +242,9 @@ internal fun CardEditorScreen(
             pendingSettingsSection = null
             when (section) {
                 EditorSettingsSection.REMINDERS -> onReminders()
-                EditorSettingsSection.DISPLAY -> displayOpen = true
+                EditorSettingsSection.DISPLAY -> {
+                    displayImage = imagePath; displaySize = size; stagedCover = null; displayOpen = true
+                }
                 EditorSettingsSection.TOPICS -> topics.open = true
                 EditorSettingsSection.OTHER -> otherOpen = true
             }
@@ -285,7 +312,7 @@ internal fun CardEditorScreen(
                     minimumLines = if (noteType == NoteType.CHECKLIST) 2 else 12,
                     placeholder = if (noteType == NoteType.CHECKLIST) "Описание (необязательно)" else "О чём хочется помнить?",
                     onEditDrawing = { block ->
-                        dismissKeyboard(); drawingBlockId = block.id; drawingSource = block.path
+                        dismissKeyboard(); editingCover = false; drawingBlockId = block.id; drawingSource = block.path
                         drawingKey = java.util.UUID.randomUUID().toString()
                     })
                 if (noteType == NoteType.CHECKLIST) ChecklistEditor(checklist, { checklist = ArrayList(it) },
@@ -367,7 +394,7 @@ internal fun CardEditorScreen(
     if (galleryOpen) com.ontop.app.gallery.GalleryPicker(onDismiss = { galleryOpen = false }, destination = galleryDestination,
         onSelect = { item ->
             galleryOpen = false
-            if (galleryDestination == MediaDestination.COVER) onImageSelected(item.uri)
+            if (galleryDestination == MediaDestination.COVER) selectedCover(item.uri)
             else if (item.video) onAttachFile?.invoke(listOf(item.uri)) { blocks -> blocks.forEach(::insertBlock) }
             else onInlineImport?.invoke(item.uri) { path -> insertBlock(NoteMedia(offset = 0, kind = MediaKind.IMAGE, path = path)) }
         }, onCamera = {
@@ -405,25 +432,40 @@ internal fun CardEditorScreen(
         insertBlock(NoteMedia(offset = 0, kind = MediaKind.YOUTUBE, video = video)); videoDialog = false
     }, onClose = { videoDialog = false })
     drawingKey?.let { key -> com.ontop.app.drawing.DrawingEditor(key, drawingSource,
-        onDismiss = { drawingKey = null }, onSaved = { path ->
+        onDismiss = { editingCover = false; drawingKey = null }, onSaved = { path ->
+            if (editingCover) {
+                onStageEditedCover(path)
+                onDiscardStagedCover(stagedCover)
+                stagedCover = path; displayImage = path
+                editingCover = false; drawingKey = null
+                return@DrawingEditor
+            }
             onInlineDraftPaths(setOf(path))
             val blockId = drawingBlockId
             if (blockId == null) insertBlock(NoteMedia(offset = 0, kind = MediaKind.IMAGE, path = path))
             else document = document.copy(media = document.media.map { if (it.id == blockId) it.copy(path = path) else it })
             drawingKey = null
         }) }
-    if (displayOpen) EditorDisplayDialog(imagePath, size, saving, chooseImage, onRemoveImage,
-        onSize = { dismissKeyboard(); size = it }, onClose = { displayOpen = false })
-    if (otherOpen) EditorOtherDialog(card != null, importance, progress, saving,
-        onImportance = { percentages = percentages.copy(importance = it) },
-        onPercentages = { otherOpen = false; percentagesOpen = true },
-        onDelete = { otherOpen = false; confirmDelete = true }, onClose = { otherOpen = false })
+    if (displayOpen && !galleryOpen && drawingKey == null) EditorDisplayDialog(displayImage, displaySize, saving, error, chooseImage,
+        onRemoveImage = { onDiscardStagedCover(stagedCover); stagedCover = null; displayImage = null },
+        onEditImage = {
+            editingCover = true; drawingSource = displayImage; drawingBlockId = null
+            drawingKey = java.util.UUID.randomUUID().toString()
+        }, onSize = { dismissKeyboard(); displaySize = it },
+        onCancel = {
+            onDiscardStagedCover(stagedCover); stagedCover = null; displayOpen = false
+        }, onApply = {
+            if (displayImage != imagePath) onApplyDisplayCover(displayImage)
+            size = displaySize; stagedCover = null; displayOpen = false
+        })
+    if (otherOpen) EditorOtherDialog(editorKey ?: 0L, card != null, importance, progress,
+        automaticProgress = noteType == NoteType.CHECKLIST, saving = saving,
+        onApply = { newImportance, newProgress ->
+            percentages = NotePercentages(newImportance,
+                if (noteType == NoteType.CHECKLIST) percentages.progress else newProgress)
+        }, onDelete = { otherOpen = false; confirmDelete = true }, onClose = { otherOpen = false })
     if (topics.open) TagPickerDialog(availableTags, topics.ids, topics.names, !saving,
         onChange = { ids, names -> topics.ids = ids; topics.names = names }, onClose = { topics.open = false })
-    if (percentagesOpen) NotePercentagesDialog(editorKey ?: 0L, importance, progress,
-        onDismiss = { percentagesOpen = false },
-        onSave = { newImportance, newProgress -> percentages = NotePercentages(newImportance, newProgress); percentagesOpen = false },
-        automaticProgress = noteType == NoteType.CHECKLIST)
     if (confirmDiscard) {
         AlertDialog(onDismissRequest = { confirmDiscard = false }, title = { Text("Отменить изменения?") },
             confirmButton = {

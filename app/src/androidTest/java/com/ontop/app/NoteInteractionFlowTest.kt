@@ -92,7 +92,7 @@ class NoteInteractionFlowTest {
             compose.onNodeWithTag("card-1").performClick()
             awaitCount(1, NoteInteractionType.NOTE_OPENED, 1)
             restoration.emulateSavedInstanceStateRestore()
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             compose.onNodeWithTag("editor-title").performTextReplacement("Отменённый заголовок")
             compose.onNodeWithContentDescription("Назад").performClick()
             compose.onNodeWithText("Не сохранять").performClick()

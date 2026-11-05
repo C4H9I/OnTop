@@ -57,7 +57,7 @@ class DrawingPhotoEditorTest {
             compose.onNodeWithTag("inline-image-first").performScrollTo().performClick()
             compose.onNodeWithTag("full-note-image").assertIsDisplayed()
             compose.onNodeWithText("Закрыть изображение").performClick()
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             fun open() {
                 compose.onNodeWithTag("inline-image-first").performScrollTo().performClick()
                 compose.onNodeWithText("Редактировать изображение").performClick()
@@ -75,12 +75,19 @@ class DrawingPhotoEditorTest {
             compose.onNodeWithTag("drawing-canvas").performTouchInput { click(Offset(width * .1f, height * .1f)) }
             compose.onNodeWithTag("drawing-text-input").performTextInput("Подпись к фото\nOnTop")
             compose.onNodeWithText("Добавить / сохранить").performClick()
-            compose.onNodeWithText("Карандаш").performClick()
+            compose.onNodeWithTag("drawing-pencil-tool").performClick()
             compose.onNodeWithText("Очистить").performClick()
             compose.onNodeWithText("Очистить нарисованный слой?").assertIsDisplayed()
             compose.onAllNodesWithText("Очистить").onLast().performClick()
             compose.onNodeWithTag("drawing-undo").performClick()
-            compose.onNodeWithText("Готово").performClick()
+            compose.onNodeWithTag("drawing-crop-tool").performScrollTo().performClick()
+            compose.onNodeWithTag("drawing-crop-overlay").assertIsDisplayed()
+            compose.onNodeWithTag("crop-preset-1:1").performScrollTo().performClick()
+            compose.onNodeWithText("Отмена").performClick()
+            compose.onNodeWithTag("drawing-crop-tool").performScrollTo().performClick()
+            compose.onNodeWithTag("crop-apply").performClick()
+            compose.waitUntil(5000) { compose.onAllNodesWithTag("drawing-crop-overlay").fetchSemanticsNodes().isEmpty() }
+            compose.onNodeWithTag("drawing-save").performClick()
             compose.waitUntil(10000) { compose.onAllNodesWithTag("drawing-editor").fetchSemanticsNodes().isEmpty() }
             compose.onNodeWithTag("editor-save").performClick()
             compose.waitUntil(10000) { model.state.value.cards.any { RichTextCodec.decode(it.description, it.formatting).media.first().path != photo } }
@@ -90,8 +97,9 @@ class DrawingPhotoEditorTest {
             assertEquals(photo, blocks[1].path); assertArrayEquals(sourceBytes, file.readBytes())
             assertEquals(1, DrawingStore.load(app, result).operations.size)
             assertEquals("Подпись к фото\nOnTop", DrawingStore.load(app, result).texts.single().text)
-            compose.onNodeWithText("Фото").performClick(); compose.onNodeWithText("Редактировать").performClick()
-            open(); line(); compose.onNodeWithText("Назад").performClick()
+            assertEquals(SourceCrop(32, 16, 368, 184), DrawingStore.load(app, result).sourceCrop)
+            compose.onNodeWithText("Фото").performClick(); compose.onNodeWithContentDescription("Редактировать").performClick()
+            open(); line(); compose.onNodeWithTag("drawing-back").performClick()
             compose.onNodeWithText("Не сохранять").performClick()
             assertEquals(result, RichTextCodec.decode(db.cardDao().findById(1)!!.description, db.cardDao().findById(1)!!.formatting).media.first().path)
             assertEquals(1, DrawingStore.load(app, result).operations.size)

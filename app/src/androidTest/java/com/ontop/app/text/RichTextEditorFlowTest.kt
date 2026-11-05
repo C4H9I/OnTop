@@ -122,7 +122,7 @@ class RichTextEditorFlowTest {
             compose.onNodeWithTag("card-description").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
             assertTrue(layouts.single().layoutInput.text.spanStyles.any { it.item.fontStyle == FontStyle.Italic })
             capture("rich-note-details")
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             field.performClick().performTextInputSelection(TextRange(0, 5))
             format("Очистить форматирование")
             compose.onNodeWithContentDescription("Назад").performClick()
@@ -157,7 +157,7 @@ class RichTextEditorFlowTest {
             }
             compose.waitUntil(5_000) { compose.onAllNodesWithTag("card-$id").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("card-$id").performClick()
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             compose.onNodeWithTag("editor-description").assertTextContains(original)
             compose.onNodeWithTag("editor-title").performTextReplacement("Новый заголовок")
             compose.onNodeWithTag("editor-save").performClick()

@@ -46,7 +46,7 @@ class UiRefinementsTest(private val width: Int) {
         compose.onNodeWithTag("details-title").assertTextEquals("Чистый заголовок")
         val badge = compose.onNodeWithTag("details-status-1").fetchSemanticsNode().boundsInRoot
         val topics = compose.onNodeWithTag("details-status-1-topics").fetchSemanticsNode().boundsInRoot
-        assertTrue(topics.left >= badge.right)
+        assertTrue(topics.top >= badge.bottom)
         tags.forEach { compose.onNodeWithText(it.name).assertIsDisplayed() }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val directory = File(context.getExternalFilesDir(null), "ui-refinements").apply { mkdirs() }

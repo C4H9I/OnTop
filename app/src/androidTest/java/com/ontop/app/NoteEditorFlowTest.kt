@@ -166,7 +166,7 @@ class NoteEditorFlowTest {
             assertTrue(rule.enabled)
             assertNotNull(rule.nextAt)
             compose.onNodeWithTag("card-${saved.id}").performScrollTo().performClick()
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Напоминания").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Напоминания").performClick()
             waitSettings()
@@ -177,7 +177,7 @@ class NoteEditorFlowTest {
             compose.onNodeWithContentDescription("Назад").performClick()
             compose.onNodeWithText("Не сохранять").performClick()
             assertTrue(db.reminderDao().forCard(saved.id)!!.enabled)
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             compose.onNodeWithText("Напоминания").performClick()
             waitSettings()
             compose.onNode(isToggleable()).performClick()

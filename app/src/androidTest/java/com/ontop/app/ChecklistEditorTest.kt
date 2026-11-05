@@ -82,7 +82,7 @@ class ChecklistEditorTest {
             compose.onNodeWithText("Рассчитывается по выполненным пунктам").assertIsDisplayed()
             compose.onNodeWithTag("progress-input").assertDoesNotExist()
             compose.onNodeWithTag("percent-cancel").performClick()
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             note = model.state.value.cards.first { it.id == note.id }
             compose.onNodeWithTag("checklist-text-${note.checklistItems().first().id}").performScrollTo().performTextReplacement("Несохранённый пункт")
             compose.onNodeWithContentDescription("Назад").performClick()

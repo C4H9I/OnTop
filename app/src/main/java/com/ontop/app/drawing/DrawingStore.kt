@@ -3,6 +3,8 @@ package com.ontop.app.drawing
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
+import android.graphics.Rect
 import com.ontop.app.data.CardImageStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -25,7 +27,10 @@ object DrawingStore {
             require(document.backgroundImage == sourcePath(path) && source.isFile && source.length() <= 16L * 1024 * 1024)
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(source.path, bounds)
-            require(bounds.outWidth == document.width && bounds.outHeight == document.height)
+            val crop = document.sourceCrop
+            if (crop == null) require(bounds.outWidth == document.width && bounds.outHeight == document.height)
+            else require(crop.right <= bounds.outWidth && crop.bottom <= bounds.outHeight &&
+                crop.width == document.width && crop.height == document.height)
             require(bounds.outMimeType in setOf("image/jpeg", "image/png", "image/webp"))
         }
         return document
@@ -46,8 +51,21 @@ object DrawingStore {
             val images = CardImageStore(context)
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(images.resolve(path).path, bounds)
-            require(bounds.outWidth == document.width && bounds.outHeight == document.height)
-            images.load(path, maxSide)
+            val crop = document.sourceCrop
+            if (crop == null) {
+                require(bounds.outWidth == document.width && bounds.outHeight == document.height)
+                images.load(path, maxSide)
+            } else {
+                require(crop.right <= bounds.outWidth && crop.bottom <= bounds.outHeight && crop.width > 0 && crop.height > 0)
+                var sample = 1
+                while (maxOf(crop.width, crop.height) / sample > maxSide) sample *= 2
+                images.resolve(path).inputStream().use { input ->
+                    val decoder = BitmapRegionDecoder.newInstance(input, false) ?: error("Cannot decode crop")
+                    try { decoder.decodeRegion(Rect(crop.left, crop.top, crop.right, crop.bottom),
+                        BitmapFactory.Options().apply { inSampleSize = sample }) ?: error("Cannot decode crop") }
+                    finally { decoder.recycle() }
+                }
+            }
         }
     }
     suspend fun load(context: Context, path: String): DrawingDocument = withContext(Dispatchers.IO) {

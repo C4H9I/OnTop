@@ -79,7 +79,7 @@ class CardDetailsDialogTest {
                 }
             }
             try { compose.waitUntil(5_000) {
-                compose.onAllNodesWithText("История размышлений · 30").fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithText("История размышлений").fetchSemanticsNodes().isNotEmpty()
             }
             compose.onNodeWithTag("comment-input").performClick().performTextInput("Новая запись")
             compose.waitUntil(5_000) { imeVisible }
@@ -115,10 +115,12 @@ class CardDetailsDialogTest {
             compose.onNodeWithText("К последней записи").performClick()
             compose.onNodeWithText("Ещё одна запись").assertIsDisplayed()
             val last = saved.last()
+            compose.onNodeWithTag("comment-menu-${last.id}").performClick()
             compose.onNodeWithTag("delete-comment-${last.id}").performClick()
             compose.onNodeWithText("Удалить комментарий?").assertIsDisplayed()
             compose.onNodeWithText("Отмена").performClick()
             assertEquals(32, db.cardCommentDao().observeComments(id).first().size)
+            compose.onNodeWithTag("comment-menu-${last.id}").performClick()
             compose.onNodeWithTag("delete-comment-${last.id}").performClick()
             compose.onNodeWithText("Удалить", substring = false).performClick()
             compose.waitUntil(5_000) {

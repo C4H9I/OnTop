@@ -43,7 +43,7 @@ class WidgetRotationUiTest {
         compose.onNodeWithText("Важность: 50%").assertIsDisplayed()
         compose.onNodeWithTag("editor-importance").performSemanticsAction(SemanticsActions.SetProgress) { it(100f) }
         compose.onNodeWithText("Важность: 100%").assertIsDisplayed()
-        compose.onNodeWithText("Готово").performClick()
+        compose.onNodeWithText("Применить").performClick()
         compose.onNodeWithTag("editor-save").performClick()
         assertEquals(100, saved)
     }

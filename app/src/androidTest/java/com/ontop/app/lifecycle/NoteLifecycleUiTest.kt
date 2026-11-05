@@ -59,7 +59,7 @@ class NoteLifecycleUiTest {
             compose.onNodeWithTag("card-1").performClick()
             action("Удалить")
             collection("Корзина")
-            compose.onNodeWithText("Редактировать").assertIsNotEnabled()
+            compose.onNodeWithContentDescription("Редактировать").assertIsNotEnabled()
             action("Восстановить из корзины")
             compose.onNodeWithText("Корзина пуста").assertExists()
             compose.onNodeWithText("На доску").performClick()

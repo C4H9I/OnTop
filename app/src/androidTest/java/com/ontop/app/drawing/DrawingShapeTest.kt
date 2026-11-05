@@ -125,26 +125,26 @@ class DrawingShapeTest {
         compose.setContent { if (visible) DrawingEditor(key,source,{ visible=false },{ saved=it; visible=false }) }
         fun ready() = compose.waitUntil(5000) { compose.onAllNodesWithTag("drawing-canvas").fetchSemanticsNodes().isNotEmpty() }
         ready()
-        compose.onNodeWithText("\u0424\u0438\u0433\u0443\u0440\u044b").performClick()
+        compose.onNodeWithTag("drawing-shape-tool").performClick()
         compose.onNodeWithText(ShapeType.ARROW.label).performClick()
         compose.onNodeWithTag("drawing-canvas").performTouchInput {
             down(Offset(width*.2f,height*.3f)); moveTo(Offset(width*.7f,height*.5f),200); up()
         }
         compose.onNodeWithTag("drawing-color-\u0421\u0438\u043d\u0438\u0439").performClick()
         compose.onNodeWithTag("drawing-width").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress) { it(12f) }
-        compose.onNodeWithText("\u0413\u043e\u0442\u043e\u0432\u043e").performClick()
+        compose.onNodeWithTag("drawing-save").performClick()
         compose.waitUntil(10000) { saved != null }
         val path=saved!!
         val arrow=DrawingStore.load(context,path).shapes.single()
         assertEquals(ShapeType.ARROW,arrow.type); assertEquals(12f,arrow.width); assertEquals(0xFF1565C0.toInt(),arrow.color)
         compose.runOnIdle { key=UUID.randomUUID().toString(); source=path; saved=null; visible=true }
         ready()
-        compose.onNodeWithText("\u0424\u0438\u0433\u0443\u0440\u044b").performClick()
+        compose.onNodeWithTag("drawing-shape-tool").performClick()
         compose.onNodeWithText(ShapeType.ARROW.label).performClick()
         compose.onNodeWithTag("drawing-canvas").performTouchInput { click(Offset(width*.45f,height*.4f)) }
         compose.onNodeWithText("\u0423\u0434\u0430\u043b\u0438\u0442\u044c").performClick()
         compose.onNodeWithTag("drawing-undo").performClick()
-        compose.onNodeWithText("\u0413\u043e\u0442\u043e\u0432\u043e").performClick()
+        compose.onNodeWithTag("drawing-save").performClick()
         compose.waitUntil(10000) { saved != null }
         assertEquals(arrow,DrawingStore.load(context,saved!!).shapes.single())
     }

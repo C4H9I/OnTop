@@ -26,7 +26,7 @@ class ReminderDetailsDesignTest(private val width: Int, private val fontScale: F
         @JvmStatic @Parameterized.Parameters(name = "{0}dp font={1}")
         fun sizes() = listOf(arrayOf<Any>(320, 1f), arrayOf<Any>(280, 2f))
     }
-    @Test fun bellStaysVisibleAndClickableAboveLongContentAndScrolledHistory() {
+    @Test fun activeReminderAndMenuStayAccessibleWithLongContent() {
         var opened = 0
         compose.setContent {
             val density = LocalDensity.current
@@ -37,21 +37,22 @@ class ReminderDetailsDesignTest(private val width: Int, private val fontScale: F
                             description = "Подробное описание. ".repeat(200), createdAt = 1, updatedAt = 1, sortOrder = 0),
                             (1L..80L).map { CardCommentEntity(it, 1, "Запись $it", it) }, true, false, false, null,
                             onAddComment = { _, _ -> }, onDeleteComment = { _, _ -> }, onDismiss = {}, onEdit = {},
-                            onReminder = { opened++ })
+                            onReminder = { opened++ }, reminderStatus = "Ежедневно в 09:00")
                     }
                 }
             }
         }
-        val bell = compose.onNodeWithTag("reminder-settings")
-        bell.assertIsDisplayed().performClick()
-        val before = bell.fetchSemanticsNode().boundsInRoot
-        val edit = compose.onNodeWithText("Редактировать").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("reminder-status").assertIsDisplayed().performClick()
+        val menu = compose.onNodeWithContentDescription("Меню заметки")
+        val before = menu.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val edit = compose.onNodeWithContentDescription("Редактировать").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         val back = compose.onNodeWithContentDescription("Закрыть карточку").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         assertTrue(before.left >= edit.right)
         assertTrue(back.right <= edit.left)
         compose.onNodeWithTag("reflection-list").performScrollToIndex(60)
-        bell.assertIsDisplayed().performClick()
-        assertEquals(before, bell.fetchSemanticsNode().boundsInRoot)
+        menu.assertIsDisplayed().performClick()
+        compose.onNodeWithText("Напоминание").performClick()
+        assertEquals(before, menu.fetchSemanticsNode().boundsInRoot)
         compose.runOnIdle { assertEquals(2, opened) }
     }
 }

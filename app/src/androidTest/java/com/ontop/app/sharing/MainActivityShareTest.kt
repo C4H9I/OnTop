@@ -247,7 +247,7 @@ class MainActivityShareTest {
                 assertNull(saved.imagePath)
                 compose.onNodeWithTag("card-board").performScrollToNode(hasTestTag("card-${saved.id}"))
                 compose.onNodeWithTag("card-${saved.id}").performClick()
-                compose.onNodeWithText("Редактировать").performClick()
+                compose.onNodeWithContentDescription("Редактировать").performClick()
                 compose.onAllNodesWithContentDescription("Действия с видео").assertCountEquals(2)
                 compose.onNodeWithContentDescription("Назад").performClick()
             }

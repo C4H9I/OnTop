@@ -10,16 +10,22 @@ data class DrawingOperation(val type: String, val points: List<DrawingPoint> = e
     val color: Int = Color.BLACK, val width: Float = 4f) : Serializable
 data class DrawingText(val id: String, val text: String, val x: Float, val y: Float,
     val fontSize: Float = 32f, val color: Int = Color.BLACK, val order: Int = 0) : Serializable
+data class SourceCrop(val left: Int, val top: Int, val right: Int, val bottom: Int) : Serializable {
+    val width get() = right - left
+    val height get() = bottom - top
+}
 
 data class DrawingDocument(val width: Int = 600, val height: Int = 800,
     val background: Int = Color.WHITE, val operations: List<DrawingOperation> = emptyList(),
-    val backgroundImage: String? = null, val texts: List<DrawingText> = emptyList(), val shapes: List<DrawingShape> = emptyList()) : Serializable
+    val backgroundImage: String? = null, val texts: List<DrawingText> = emptyList(), val shapes: List<DrawingShape> = emptyList(),
+    val sourceCrop: SourceCrop? = null) : Serializable
 
 object DrawingCodec {
     const val MAX_POINTS = 100_000
-    fun encode(document: DrawingDocument): String = JSONObject().put("version", 4)
+    fun encode(document: DrawingDocument): String = JSONObject().put("version", 5)
         .put("width", document.width).put("height", document.height).put("background", document.background)
         .put("backgroundImage", document.backgroundImage ?: JSONObject.NULL)
+        .put("sourceCrop", document.sourceCrop?.let { JSONArray().put(it.left).put(it.top).put(it.right).put(it.bottom) } ?: JSONObject.NULL)
         .put("operations", JSONArray().apply { document.operations.forEach { operation ->
             put(JSONObject().put("type", operation.type).put("color", operation.color).put("width", operation.width)
                 .put("points", JSONArray().apply { operation.points.forEach { put(JSONArray().put(it.x).put(it.y)) } }))
@@ -32,10 +38,21 @@ object DrawingCodec {
         } }).toString()
     fun decode(value: String): DrawingDocument {
         val json = JSONObject(value)
-        val version = json.getInt("version"); require(version in 1..4)
+        val version = json.getInt("version"); require(version in 1..5)
         val canvasWidth = json.getInt("width"); val canvasHeight = json.getInt("height")
         val source = if (version >= 2 && !json.isNull("backgroundImage")) json.getString("backgroundImage") else null
-        if (source == null) require(canvasWidth == 600 && canvasHeight == 800)
+        val crop = if (version >= 5 && !json.isNull("sourceCrop")) json.getJSONArray("sourceCrop").let {
+            require(it.length() == 4)
+            SourceCrop(it.getInt(0), it.getInt(1), it.getInt(2), it.getInt(3)).also { rect ->
+                require(rect.left >= 0 && rect.top >= 0 && rect.right <= 30000 && rect.bottom <= 30000 &&
+                    rect.width == canvasWidth && rect.height == canvasHeight)
+            }
+        } else null
+        if (source == null) {
+            require(crop == null)
+            require(if (version < 5) canvasWidth == 600 && canvasHeight == 800
+                else canvasWidth in 1..30000 && canvasHeight in 1..30000 && canvasWidth.toLong() * canvasHeight <= 100_000_000)
+        }
         else {
             require(Regex("images/[a-f0-9-]+\\.(jpg|png|source)").matches(source))
             require(canvasWidth in 1..30000 && canvasHeight in 1..30000 && canvasWidth.toLong() * canvasHeight <= 100_000_000)
@@ -52,7 +69,8 @@ object DrawingCodec {
             val parsed = (0 until points.length()).map { i ->
                 val point = points.getJSONArray(i)
                 val x = point.getDouble(0).toFloat(); val y = point.getDouble(1).toFloat()
-                require(x.isFinite() && y.isFinite() && x in 0f..canvasWidth.toFloat() && y in 0f..canvasHeight.toFloat())
+                require(x.isFinite() && y.isFinite() && if (version < 5) x in 0f..canvasWidth.toFloat() && y in 0f..canvasHeight.toFloat()
+                    else x in -30000f..30000f && y in -30000f..30000f)
                 DrawingPoint(x, y)
             }
             require(type == "CLEAR" || parsed.isNotEmpty())
@@ -65,7 +83,8 @@ object DrawingCodec {
                 DrawingText(t.getString("id"), t.getString("text"), t.getDouble("x").toFloat(),
                     t.getDouble("y").toFloat(), t.getDouble("fontSize").toFloat(), t.getInt("color"), t.getInt("order")).also {
                     require(it.id.length in 1..100 && it.text.isNotBlank() && it.text.length <= 10000)
-                    require(it.x.isFinite() && it.y.isFinite() && it.x in 0f..canvasWidth.toFloat() && it.y in 0f..canvasHeight.toFloat())
+                    require(it.x.isFinite() && it.y.isFinite() && if (version < 5) it.x in 0f..canvasWidth.toFloat() && it.y in 0f..canvasHeight.toFloat()
+                        else it.x in -30000f..30000f && it.y in -30000f..30000f)
                     require(it.fontSize.isFinite() && it.fontSize in 8f..200f && it.order >= 0)
                 }
             }.also { require(it.map { t -> t.id }.distinct().size == it.size) }
@@ -79,14 +98,15 @@ object DrawingCodec {
                     t.getDouble("x2").toFloat(), t.getDouble("y2").toFloat(),
                     t.getInt("color"), t.getDouble("width").toFloat(), t.getInt("order")).also {
                     require(it.id.length in 1..100 && it.order >= 0)
-                    require(listOf(it.x1, it.x2).all { v -> v.isFinite() && v in 0f..canvasWidth.toFloat() })
-                    require(listOf(it.y1, it.y2).all { v -> v.isFinite() && v in 0f..canvasHeight.toFloat() })
+                    require(listOf(it.x1, it.x2).all { v -> v.isFinite() && (if (version < 5) v in 0f..canvasWidth.toFloat() else v in -30000f..30000f) })
+                    require(listOf(it.y1, it.y2).all { v -> v.isFinite() && (if (version < 5) v in 0f..canvasHeight.toFloat() else v in -30000f..30000f) })
                     require(it.width.isFinite() && it.width in 1f..24f && it.valid())
                     require(it.type == ShapeType.LINE || it.type == ShapeType.ARROW || (it.x1 <= it.x2 && it.y1 <= it.y2))
                 }
             }.also { require(it.map { s -> s.id }.distinct().size == it.size) }
         }
-        return DrawingDocument(canvasWidth, canvasHeight, operations = result, backgroundImage = source, texts = texts, shapes = shapes)
+        return DrawingDocument(canvasWidth, canvasHeight, operations = result, backgroundImage = source,
+            texts = texts, shapes = shapes, sourceCrop = crop)
     }
 }
 

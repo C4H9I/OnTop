@@ -1,7 +1,8 @@
 package com.ontop.app
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.background
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -13,8 +14,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.ontop.app.ui.theme.Forest
 import com.ontop.app.ui.theme.Ink
 import com.ontop.app.ui.theme.WarmBackground
@@ -183,6 +189,7 @@ internal fun CardDetailsContent(
         dismissButton = { TextButton(onClick = { confirmPermanent = false }) { Text("Отмена") } })
     var draft by rememberSaveable(card.id) { mutableStateOf("") }
     var deletingId by rememberSaveable(card.id) { mutableStateOf<Long?>(null) }
+    var commentMenuId by rememberSaveable(card.id) { mutableStateOf<Long?>(null) }
     var pendingId by rememberSaveable(card.id) { mutableStateOf<Long?>(null) }
     var jumpTargetId by rememberSaveable(card.id) { mutableStateOf<Long?>(null) }
     var followSubmission by remember { mutableStateOf(false) }
@@ -223,39 +230,27 @@ internal fun CardDetailsContent(
     Surface(modifier.fillMaxSize().testTag("card-details"), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
             BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val compactActions = maxWidth < 400.dp
+            val centerTitle = maxWidth >= 360.dp && LocalDensity.current.fontScale <= 1.3f
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onDismiss, enabled = !saving) {
+                IconButton(onClick = onDismiss, enabled = !saving, modifier = Modifier.size(48.dp)) {
                     Icon(painterResource(R.drawable.ic_back), contentDescription = "Закрыть карточку")
                 }
-                TextButton(onClick = onEdit, enabled = !saving && card.status != CardStatus.TRASHED,
-                    contentPadding = PaddingValues(horizontal = 4.dp), modifier = Modifier.weight(1f)) {
-                    Text("Редактировать", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                }
-                if (!compactActions && onStatistics != null) IconButton(onClick = onStatistics) {
-                    Icon(painterResource(R.drawable.ic_statistics), contentDescription = "Статистика заметки")
-                }
-                if (!compactActions && onShare != null) IconButton(onClick = onShare, enabled = !saving && !sharing,
-                    modifier = Modifier.testTag("share-note")) {
-                    Icon(painterResource(R.drawable.ic_share), contentDescription = "Поделиться",
-                        tint = MaterialTheme.colorScheme.primary)
-                }
-                if (!compactActions && onReminder != null) IconButton(onClick = onReminder, enabled = !saving,
-                    modifier = Modifier.testTag("reminder-settings")) {
-                    Icon(painterResource(R.drawable.ic_bell), contentDescription = "Настроить напоминание",
-                        tint = MaterialTheme.colorScheme.primary)
+                if (centerTitle) Spacer(Modifier.width(48.dp))
+                Text("Заметка", style = MaterialTheme.typography.titleLarge, color = Ink,
+                    textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+                IconButton(onClick = onEdit, enabled = !saving && card.status != CardStatus.TRASHED,
+                    modifier = Modifier.size(48.dp).testTag("details-edit")) {
+                    Icon(painterResource(R.drawable.ic_draw), contentDescription = "Редактировать", tint = Forest)
                 }
                 Box {
-                    IconButton(onClick = { menu = true }, enabled = !saving) {
+                    IconButton(onClick = { menu = true }, enabled = !saving, modifier = Modifier.size(48.dp)) {
                         Icon(painterResource(R.drawable.ic_more), "Меню заметки")
                     }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        if (compactActions && onStatistics != null) DropdownMenuItem(text = { Text("Статистика") },
+                        if (onStatistics != null) DropdownMenuItem(text = { Text("Статистика") },
                             onClick = { menu = false; onStatistics() })
-                        if (compactActions && onReminder != null) DropdownMenuItem(text = { Text("Напоминание") },
+                        if (onReminder != null) DropdownMenuItem(text = { Text("Напоминание") },
                             enabled = !saving, onClick = { menu = false; onReminder() })
-                        if (card.status != CardStatus.TRASHED) DropdownMenuItem(text = { Text("Редактировать") },
-                            onClick = { menu = false; onEdit() })
                         if (onShare != null) DropdownMenuItem(text = { Text("Поделиться") }, enabled = !sharing,
                             onClick = { menu = false; onShare() })
                         if (card.status == CardStatus.ACTIVE && onArchive != null) DropdownMenuItem(text = { Text("Архивировать") },
@@ -275,27 +270,17 @@ internal fun CardDetailsContent(
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)) {
                 item(key = "summary") {
                     Column {
-                        BoxWithConstraints(Modifier.fillMaxWidth()) {
-                            val compactTitle = maxWidth < 360.dp || card.title.length > 48
-                            val indicator: @Composable () -> Unit = {
-                                NoteStatusIndicator(card.importance, card.progress,
-                                    Modifier.testTag("details-status-${card.id}"), diameter = 76.dp,
-                                    enabled = !saving && card.status != CardStatus.TRASHED,
-                                    onClick = onPercentages, showBackground = false)
-                            }
-                            if (compactTitle) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(card.title, style = MaterialTheme.typography.headlineSmall,
-                                    modifier = Modifier.fillMaxWidth().testTag("details-title"))
-                                indicator()
-                            } else Row(verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                indicator()
-                                Text(card.title, style = MaterialTheme.typography.headlineSmall,
-                                    modifier = Modifier.weight(1f).testTag("details-title"))
-                            }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            NoteStatusIndicator(card.importance, card.progress,
+                                Modifier.testTag("details-status-${card.id}"), variant = StatusIndicatorSize.Reading,
+                                diameter = 60.dp, enabled = !saving && card.status != CardStatus.TRASHED,
+                                onClick = onPercentages, showBackground = false)
+                            Text(card.title, style = MaterialTheme.typography.headlineSmall,
+                                color = Ink, modifier = Modifier.weight(1f).testTag("details-title"))
                         }
                         if (tags.isNotEmpty()) androidx.compose.foundation.layout.FlowRow(
-                            Modifier.fillMaxWidth().padding(top = 8.dp),
+                            Modifier.fillMaxWidth().padding(top = 8.dp).testTag("details-status-${card.id}-topics"),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             tags.forEach { tag -> Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
@@ -312,11 +297,14 @@ internal fun CardDetailsContent(
                                 MaterialTheme.colorScheme.background.luminance() < 0.5f), style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier.padding(top = 12.dp, bottom = 8.dp).testTag("card-description"))
                         }
-                        if (onReminder != null) TextButton(onClick = onReminder, enabled = !saving,
-                            modifier = Modifier.fillMaxWidth().testTag("reminder-status"),
-                            contentPadding = PaddingValues(vertical = 8.dp)) {
-                            Text(reminderStatus, modifier = Modifier.fillMaxWidth(),
-                                style = MaterialTheme.typography.bodyMedium)
+                        if (onReminder != null && reminderStatus != "Напоминание выключено") TextButton(
+                            onClick = onReminder, enabled = !saving,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("reminder-status"),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp)) {
+                            Icon(painterResource(R.drawable.ic_bell), null, Modifier.size(18.dp), tint = Forest)
+                            Spacer(Modifier.width(8.dp))
+                            Text(reminderStatus, modifier = Modifier.weight(1f), textAlign = TextAlign.Start,
+                                style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -325,30 +313,48 @@ internal fun CardDetailsContent(
                         onToggle = { onChecklistToggle?.invoke(item.id) })
                 }
                 item(key = "history-heading") {
-                    Column(Modifier.padding(top = 16.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("История размышлений · ${if (loaded && !loadError) comments.size else "—"}",
-                            style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag("history-heading"))
+                    Column(Modifier.padding(top = 12.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("История размышлений", style = MaterialTheme.typography.titleMedium,
+                                color = Ink, modifier = Modifier.weight(1f).testTag("history-heading"))
+                            Text(if (loaded && !loadError) comments.size.toString() else "—",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.testTag("history-count"))
+                        }
                         when {
                             loadError -> Text("Не удалось загрузить историю. Откройте карточку повторно.",
                                 color = MaterialTheme.colorScheme.error)
                             !loaded -> Text("Загружаем историю…")
-                            comments.isEmpty() -> Text("Здесь сохранится история ваших размышлений. Добавьте первую запись в поле внизу.",
+                            comments.isEmpty() -> Text("Пока нет записей. Добавьте первую ниже.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
                 items(comments, key = { "comment-${it.id}" }) { comment ->
                     Column(Modifier.fillMaxWidth().testTag("comment-${comment.id}")) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
-                        Text(formatter.format(Instant.ofEpochMilli(comment.createdAt)),
-                            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
-                        Text(comment.text, style = MaterialTheme.typography.bodyLarge)
-                        TextButton(onClick = { deletingId = comment.id }, enabled = !saving,
-                            contentPadding = PaddingValues(horizontal = 0.dp),
-                            modifier = Modifier.testTag("delete-comment-${comment.id}")) {
-                            Text("Удалить комментарий", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(formatter.format(Instant.ofEpochMilli(comment.createdAt)),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f))
+                            Box {
+                                IconButton(onClick = { commentMenuId = comment.id }, enabled = !saving,
+                                    modifier = Modifier.size(48.dp).testTag("comment-menu-${comment.id}")) {
+                                    Icon(painterResource(R.drawable.ic_more), "Действия с комментарием")
+                                }
+                                DropdownMenu(expanded = commentMenuId == comment.id,
+                                    onDismissRequest = { commentMenuId = null }) {
+                                    DropdownMenuItem(text = { Text("Удалить") },
+                                        modifier = Modifier.testTag("delete-comment-${comment.id}"),
+                                        onClick = { commentMenuId = null; deletingId = comment.id })
+                                }
+                            }
                         }
+                        Text(comment.text, style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.padding(bottom = 12.dp))
                     }
                 }
             }
@@ -365,15 +371,26 @@ internal fun CardDetailsContent(
                         }, modifier = Modifier.align(Alignment.End)) { Text("К последней записи") }
                     }
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(horizontal = 16.dp).heightIn(max = 80.dp)
-                            .verticalScroll(androidx.compose.foundation.rememberScrollState())) }
+                        maxLines = 3, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 16.dp)) }
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.Bottom) {
-                        OutlinedTextField(value = draft, onValueChange = { draft = it }, enabled = !saving,
-                            placeholder = { Text("Напишите…") }, shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
-                            modifier = Modifier.weight(1f).testTag("comment-input")
-                                .semantics { contentDescription = "Новое размышление" }, maxLines = 3)
+                        BasicTextField(value = draft, onValueChange = { draft = it }, enabled = !saving,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Ink),
+                            cursorBrush = SolidColor(Forest), minLines = 1, maxLines = 4,
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp, max = 136.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .65f), RoundedCornerShape(16.dp))
+                                .padding(horizontal = 12.dp, vertical = 12.dp).testTag("comment-input")
+                                .semantics { contentDescription = "Новое размышление" },
+                            decorationBox = { inner ->
+                                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                                    if (draft.isEmpty()) Text("Напишите комментарий…",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    inner()
+                                }
+                            })
                         FilledIconButton(onClick = submit, enabled = !saving && draft.isNotBlank(),
                             modifier = Modifier.size(48.dp).testTag("send-comment")) {
                             Icon(painterResource(R.drawable.ic_send), contentDescription = if (saving) "Сохраняем…" else "Добавить комментарий")

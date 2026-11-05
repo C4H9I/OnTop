@@ -17,8 +17,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
 
-internal enum class StatusIndicatorSize { Compact, Expanded }
+internal enum class StatusIndicatorSize { Compact, Reading, Expanded }
 
 @Composable
 internal fun NoteStatusIndicator(importance: Int, progress: Int?, modifier: Modifier = Modifier,
@@ -32,6 +34,7 @@ internal fun NoteStatusIndicator(importance: Int, progress: Int?, modifier: Modi
         else MaterialTheme.colorScheme.onSurface.copy(alpha = .12f)
     val values = "Важность: $importance%. Готовность: ${progress?.let { "$it%" } ?: "не отслеживается"}"
     val touchDiameter = if (variant == StatusIndicatorSize.Compact && onClick != null) 48.dp else diameter
+    val fontScale = LocalDensity.current.fontScale
     Box(modifier.size(touchDiameter).clip(CircleShape).then(if (onClick != null) Modifier.clickable(enabled = enabled,
         role = Role.Button, onClickLabel = "Изменить важность и готовность", onClick = onClick) else Modifier)
         .semantics(mergeDescendants = true) { contentDescription = values }, contentAlignment = Alignment.Center) {
@@ -55,11 +58,19 @@ internal fun NoteStatusIndicator(importance: Int, progress: Int?, modifier: Modi
                 false, center - Offset(innerRadius, innerRadius), Size(innerRadius * 2, innerRadius * 2),
                 style = Stroke(inner, cap = StrokeCap.Butt))
         }
-        if (variant == StatusIndicatorSize.Expanded) Column(horizontalAlignment = Alignment.CenterHorizontally,
+        if (variant != StatusIndicatorSize.Compact) Column(horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.clearAndSetSemantics { }) {
-            Text("$importance%", style = MaterialTheme.typography.titleLarge,
-                color = if (showBackground) Color.White else MaterialTheme.colorScheme.onSurface)
-            Text(progress?.let { "$it%" } ?: "—", style = MaterialTheme.typography.labelMedium, color = blue)
+            if (variant == StatusIndicatorSize.Reading) {
+                val factor = maxOf(1f, fontScale / 1.2f)
+                Text("$importance%", fontSize = (11f / factor).sp, lineHeight = (12f / factor).sp,
+                    color = if (showBackground) Color.White else MaterialTheme.colorScheme.onSurface)
+                Text(progress?.let { "$it%" } ?: "—", fontSize = (9f / factor).sp,
+                    lineHeight = (10f / factor).sp, color = blue)
+            } else {
+                Text("$importance%", style = MaterialTheme.typography.titleLarge,
+                    color = if (showBackground) Color.White else MaterialTheme.colorScheme.onSurface)
+                Text(progress?.let { "$it%" } ?: "—", style = MaterialTheme.typography.labelMedium, color = blue)
+            }
         }
     }
 }

@@ -107,7 +107,7 @@ class MultimediaNoteTest {
             compose.onNodeWithTag("full-note-image").assertIsDisplayed()
             compose.onNodeWithText("Закрыть изображение").performClick()
             capture("multimedia-note-view")
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             compose.onAllNodes(inlineImages()).onFirst().performScrollTo().performTouchInput { longClick() }
             compose.onNodeWithText("Удалить изображение из текста").performClick()
             compose.onNodeWithTag("editor-save").performClick()
@@ -118,7 +118,7 @@ class MultimediaNoteTest {
             assertTrue(rich.imagePaths().all { CardImageStore(app).resolve(it).exists() })
             assertFalse(CardImageStore(app).resolve((imported - rich.imagePaths()).single()).exists())
             val filesBeforeDraft = File(app.filesDir, "images").listFiles().orEmpty().map { it.name }.toSet()
-            compose.onNodeWithTag("card-${saved.id}").performClick(); compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithTag("card-${saved.id}").performClick(); compose.onNodeWithContentDescription("Редактировать").performClick()
             body.performScrollTo().performTextInputSelection(TextRange(0)); action("Вставить изображение")
             compose.waitUntil(5_000) { pickerCalls == 3 && !model.state.value.saving }
             compose.onNodeWithContentDescription("Назад").performClick()

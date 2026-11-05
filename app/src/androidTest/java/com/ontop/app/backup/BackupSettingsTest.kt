@@ -106,7 +106,7 @@ class BackupSettingsTest {
             compose.onNodeWithText("Исходная версия").assertIsDisplayed()
             compose.onNodeWithContentDescription("Просмотр заметок").performClick()
             compose.onNodeWithText("1 из 1").assertIsDisplayed()
-            compose.onNodeWithText("Редактировать").performClick()
+            compose.onNodeWithContentDescription("Редактировать").performClick()
             compose.onNodeWithTag("editor-title").performTextReplacement("Устаревший черновик")
             // A replacement performed by another route must invalidate a draft even when IDs match.
             backup.prepare { file.inputStream() }; backup.restore()
